@@ -1,0 +1,58 @@
+use_gpu: True
+device: 0
+seed: 42
+
+federate:
+  mode: standalone
+  total_round_num: 338          # aligns with 0.75 chat epoch target
+  client_num: 3
+  share_local_model: True
+  save_to: "ckpts/full/qwen15moe_composite_meta3.ckpt"
+
+data:
+  root: data/
+  type: "composite_llm3.json@llm"
+  splits: [0.90, 0.09, 0.01]
+  splitter: "meta"
+
+model:
+  type: "Qwen/Qwen1.5-MoE-A2.7B@huggingface_llm"
+
+llm:
+  tok_len: 1024
+  chat:
+    max_len: 512
+    max_history_len: 0
+  adapter:
+    use: True
+    args:
+      - {
+          adapter_package: "peft",
+          adapter_method: "lora",
+          r: 8,
+          lora_alpha: 32,
+          lora_dropout: 0.05,
+          target_modules: ["q_proj","k_proj","v_proj","o_proj"],
+          modules_to_save: ["embed_tokens","lm_head"]
+        }
+
+trainer:
+  type: llmtrainer
+
+train:
+  local_update_steps: 30
+  batch_or_epoch: batch
+  is_enable_half: False
+  optimizer:
+    type: Adam
+    lr: 1.0e-4
+    betas: [0.9, 0.95]
+    eps: 1.0e-5
+
+dataloader:
+  batch_size: 1
+
+eval:
+  freq: 100
+  metrics: ["loss"]
+  count_flops: False
