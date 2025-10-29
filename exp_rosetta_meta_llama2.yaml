@@ -1,0 +1,71 @@
+use_gpu: True
+device: 0
+seed: 42
+
+early_stop:
+  patience: 0
+
+federate:
+  mode: standalone           # single Python program; we will launch with torchrun
+  client_num: 3
+  total_round_num: 100
+  share_local_model: True
+  save_client_model: True
+  save_to: "ckpts/rosetta_meta_llama2_sgd_zero3_bf16.ckpt"
+
+data:
+  root: data/
+  type: "rosetta_alpaca.json@llm"
+  splits: [0.89, 0.10, 0.01]
+  splitter: "meta"
+
+llm:
+  tok_len: 1024              # start conservative; raise after it’s stable
+  chat:
+    max_len: 1800
+    max_history_len: 10
+  adapter:
+    use: True
+    args:
+      - { adapter_package: "peft", adapter_method: "lora",
+          r: 8, lora_alpha: 16, lora_dropout: 0.05,
+          target_modules: ["q_proj","k_proj","v_proj","o_proj"],
+          modules_to_save: ["embed_tokens","lm_head"] }
+  deepspeed:
+    use: True
+    ds_config: "/home/hice1/sbhansali8/scratch/FederatedScope/deepspeed/ds_zero2_2gpu.json"
+  retry_on_nan_loss: True
+
+dataloader:
+  batch_size: 1
+  num_workers: 0
+  drop_last: True
+
+model:
+  type: "meta-llama/Llama-2-7b-hf@huggingface_llm"
+
+train:
+  local_update_steps: 10
+  batch_or_epoch: batch
+  optimizer:
+    type: SGD
+    lr: 0.0003
+    weight_decay: 0.0
+  is_enable_half: False       # let DeepSpeed handle BF16; don’t force FP16 here
+
+grad:
+  grad_accum_count: 1
+  grad_clip: 1.0
+
+criterion:
+  type: CrossEntropyLoss
+
+trainer:
+  type: llmtrainer
+  disp_freq: 50
+
+eval:
+  freq: 50
+  metrics: ["loss"]
+  count_flops: False
+  best_res_update_round_wise_key: "val_loss"
