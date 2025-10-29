@@ -2,6 +2,7 @@ import copy
 import logging
 import sys
 import pickle
+import os  # NEW
 
 from federatedscope.core.message import Message
 from federatedscope.core.communication import StandaloneCommManager, \
@@ -186,6 +187,92 @@ class Client(BaseClient):
                 'host': self.comm_manager.host,
                 'port': self.comm_manager.port
             }
+    
+    def _save_client_ckpt_final(self):
+        """Write a client-specific .ckpt compatible with FS-LLM eval."""
+        try:
+            path = add_prefix_to_path(f'client_{self.ID}_',
+                                    self._cfg.federate.save_to)
+            if self.ds_rank == 0:
+                self.trainer.save_model(path, self.state)
+                logger.info(f"[Client #{self.ID}] Saved final ckpt to {path}")
+        except Exception as e:
+            logger.warning(f"[Client #{self.ID}] Failed saving final ckpt: {e}")
+
+    # ----------------------- NEW: helper to save client artifacts -----------------------
+    def _save_final_client_artifacts(self):
+        """
+        Save this client's final local model artifacts at the end of the last round:
+        - FS-LLM style checkpoint via trainer.save_model(...)
+        - PEFT/HF adapter directory via save_pretrained (if available), with a fallback.
+
+        Output layout (derived from federate.save_to):
+            ckpts/<base_name>/clients/client_<ID>/
+                client_<ID>.ckpt
+                adapter/  (PEFT adapter dir if possible)
+        """
+        try:
+            # Only DS rank 0 writes to disk (avoid duplicates with DDP)
+            try:
+                ds_rank = getattr(self, "ds_rank", get_ds_rank())
+            except Exception:
+                ds_rank = 0
+            if ds_rank != 0:
+                return
+
+            save_to = self._cfg.federate.save_to
+            base, _ = os.path.splitext(save_to)
+            client_root = os.path.join(base, f"clients", f"client_{self.ID}")
+            os.makedirs(client_root, exist_ok=True)
+
+            # 1) Save an FS-LLM style checkpoint (works with existing eval scripts)
+            ckpt_path = os.path.join(client_root, f"client_{self.ID}.ckpt")
+            if hasattr(self.trainer, "save_model"):
+                # Pass current round state for completeness; many trainers ignore it in naming.
+                self.trainer.save_model(ckpt_path, self.state)
+                logger.info(f"[Client #{self.ID}] Saved local FS-LLM ckpt to: {ckpt_path}")
+            else:
+                logger.warning(f"[Client #{self.ID}] trainer.save_model not available; skipping FS-LLM ckpt.")
+
+            # 2) Save a PEFT adapter directory if possible (handy for HF-native eval)
+            adapter_dir = os.path.join(client_root, "adapter")
+            model_obj = None
+            for cand in ["model", "_model"]:
+                if hasattr(self.trainer, cand):
+                    model_obj = getattr(self.trainer, cand)
+                    break
+            if model_obj is None and hasattr(self, "model"):
+                model_obj = self.model
+
+            saved_adapter = False
+            if model_obj is not None:
+                # Try HF/PEFT save_pretrained
+                if hasattr(model_obj, "save_pretrained"):
+                    try:
+                        model_obj.save_pretrained(adapter_dir)
+                        saved_adapter = True
+                        logger.info(f"[Client #{self.ID}] Saved adapter via save_pretrained to: {adapter_dir}")
+                    except Exception as e:
+                        logger.warning(f"[Client #{self.ID}] save_pretrained failed: {e}")
+
+                # Fallback: save PEFT adapter state dict
+                if not saved_adapter:
+                    try:
+                        import torch  # local import to avoid unconditional dependency
+                        try:
+                            from peft import get_peft_model_state_dict
+                            state = get_peft_model_state_dict(model_obj)
+                        except Exception:
+                            # last resort: full state_dict (may be large)
+                            state = model_obj.state_dict()
+                        torch.save(state, os.path.join(client_root, "adapter.safetensors"))
+                        saved_adapter = True
+                        logger.info(f"[Client #{self.ID}] Saved adapter state_dict to: {client_root}/adapter.safetensors")
+                    except Exception as e:
+                        logger.warning(f"[Client #{self.ID}] Failed to save adapter state: {e}")
+        except Exception as e:
+            logger.warning(f"[Client #{self.ID}] Saving final local artifacts failed: {e}")
+    # ------------------------------------------------------------------------------------
 
     def _gen_timestamp(self, init_timestamp, instance_number):
         if init_timestamp is None:
@@ -358,6 +445,15 @@ class Client(BaseClient):
                 if self._cfg.wandb.use and self._cfg.wandb.client_train_info:
                     self._monitor.save_formatted_results(train_log_res,
                                                          save_file_name="")
+
+                # -------- NEW: save this client's final local artifacts in the last round --------
+                try:
+                    # Rounds are typically 0..(total_round_num-1); save on the last index.
+                    if self.state == self._cfg.federate.total_round_num - 1:
+                        self._save_final_client_artifacts()
+                except Exception as e:
+                    logger.warning(f"[Client #{self.ID}] Final artifact save skipped due to error: {e}")
+                # ---------------------------------------------------------------------------------
 
             # Return the feedbacks to the server after local update
             if self._cfg.federate.use_ss:

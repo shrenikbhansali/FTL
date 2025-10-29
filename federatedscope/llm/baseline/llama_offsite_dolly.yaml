@@ -39,7 +39,8 @@ criterion:
 trainer:
   type: llmtrainer
 eval:
-  freq: 10
+  freq: 1000
+  count_flops: False
   metrics: ['loss', 'acc']
   report: ['avg', 'weighted_avg']
   best_res_update_round_wise_key: 'val_loss'

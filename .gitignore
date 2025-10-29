@@ -137,3 +137,12 @@ dmypy.json
 .idea/
 
 **/.DS_Store
+
+
+
+/ruby
+/results
+/results_full
+/logs
+/eval_result
+/ckpts
