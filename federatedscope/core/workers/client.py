@@ -389,6 +389,13 @@ class Client(BaseClient):
             sender = message.sender
             timestamp = message.timestamp
             content = message.content
+            unlearn_meta = None
+            has_unlearn_payload = False
+            if isinstance(content, tuple) and len(content) == 2:
+                content, meta = content
+                if isinstance(meta, dict):
+                    has_unlearn_payload = True
+                    unlearn_meta = meta.get('_unlearn_bases')
 
             # dequantization
             if self._cfg.quantization.method == 'uniform':
@@ -410,6 +417,11 @@ class Client(BaseClient):
                     content[k] = v.to(self.device)
             self.trainer.update(content,
                                 strict=self._cfg.federate.share_local_model)
+            if hasattr(self.trainer, 'set_unlearn_bases'):
+                if has_unlearn_payload:
+                    self.trainer.set_unlearn_bases(unlearn_meta)
+                else:
+                    self.trainer.set_unlearn_bases({})
             self.state = round
             skip_train_isolated_or_global_mode = \
                 self.early_stopper.early_stopped and \

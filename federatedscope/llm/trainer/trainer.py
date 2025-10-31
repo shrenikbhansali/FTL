@@ -19,6 +19,21 @@ logger = logging.getLogger(__name__)
 
 
 class LLMTrainer(GeneralTorchTrainer):
+    def __init__(self,
+                 model,
+                 data,
+                 device,
+                 config,
+                 only_for_eval=False,
+                 monitor=None):
+        super().__init__(model=model,
+                         data=data,
+                         device=device,
+                         config=config,
+                         only_for_eval=only_for_eval,
+                         monitor=monitor)
+        self._unlearn_bases = {}
+        self._warned_deepspeed_unlearn = False
     def _hook_on_fit_start_numerical_precision(self, ctx):
         if self.cfg.train.is_enable_half:
             if not ctx.cfg.llm.deepspeed.use:
@@ -101,6 +116,7 @@ class LLMTrainer(GeneralTorchTrainer):
         else:
             ctx.optimizer.zero_grad()
             ctx.loss_task.backward()
+            self._project_gradients(ctx)
 
             if ctx.grad_clip > 0:
                 torch.nn.utils.clip_grad_norm_(ctx.model.parameters(),
@@ -213,6 +229,54 @@ class LLMTrainer(GeneralTorchTrainer):
         # thus simply multiply the flops to avoid redundant forward
         ctx.monitor.total_flops += ctx.monitor.flops_per_sample * \
             ctx.batch_size
+
+    def set_unlearn_bases(self, bases):
+        if bases is None:
+            self._unlearn_bases = {}
+            return
+
+        if isinstance(bases, list):
+            base_candidate = bases[0] if bases and isinstance(bases[0], dict) \
+                else {}
+        elif isinstance(bases, dict):
+            base_candidate = bases
+        else:
+            base_candidate = {}
+
+        processed = {}
+        for name, tensor in base_candidate.items():
+            if not isinstance(tensor, torch.Tensor):
+                continue
+            if tensor.ndim != 2:
+                continue
+            processed[name] = tensor.detach().clone()
+        self._unlearn_bases = processed
+
+    def _project_gradients(self, ctx):
+        if not self.cfg.train.unlearn.project_grads:
+            return
+        if not self._unlearn_bases:
+            return
+        if ctx.cfg.llm.deepspeed.use:
+            if not self._warned_deepspeed_unlearn:
+                logger.warning('UNLEARN gradient projection is disabled '
+                               'when DeepSpeed is enabled.')
+                self._warned_deepspeed_unlearn = True
+            return
+
+        device = ctx.device
+        with torch.no_grad():
+            for name, param in ctx.model.named_parameters():
+                if param.grad is None:
+                    continue
+                basis = self._unlearn_bases.get(name)
+                if basis is None or param.grad.ndim != 2:
+                    continue
+                Q = basis.to(device=device, dtype=torch.float32)
+                grad_fp32 = param.grad.data.to(dtype=torch.float32)
+                projection = (grad_fp32 @ Q) @ Q.transpose(0, 1)
+                adjusted = grad_fp32 - projection
+                param.grad.data = adjusted.to(dtype=param.grad.dtype)
 
 
 def call_llm_trainer(trainer_type):

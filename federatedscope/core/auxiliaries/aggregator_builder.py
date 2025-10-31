@@ -60,7 +60,8 @@ def get_aggregator(method, model=None, device=None, online=False, config=None):
             FedOptAggregator, NoCommunicationAggregator, \
             AsynClientsAvgAggregator, KrumAggregator, \
             MedianAggregator, TrimmedmeanAggregator, \
-            BulyanAggregator,  NormboundingAggregator
+            BulyanAggregator, NormboundingAggregator, \
+            UnlearnFedAvgAggregator
 
     STR2AGG = {
         'fedavg': ClientsAvgAggregator,
@@ -71,19 +72,33 @@ def get_aggregator(method, model=None, device=None, online=False, config=None):
         'normbounding': NormboundingAggregator
     }
 
-    if method.lower() in constants.AGGREGATOR_TYPE:
-        aggregator_type = constants.AGGREGATOR_TYPE[method.lower()]
-    else:
-        aggregator_type = "clients_avg"
-        logger.warning(
-            'Aggregator for method {} is not implemented. Will use default one'
-            .format(method))
+    aggregator_type = ''
+    override_type = getattr(config.aggregator, 'type', '')
+    if override_type:
+        aggregator_type = override_type.lower()
+
+    if not aggregator_type and \
+            getattr(config.aggregator.unlearn, 'enable', False):
+        aggregator_type = 'unlearn_fedavg'
+
+    if not aggregator_type:
+        if method.lower() in constants.AGGREGATOR_TYPE:
+            aggregator_type = constants.AGGREGATOR_TYPE[method.lower()]
+        else:
+            aggregator_type = "clients_avg"
+            logger.warning(
+                'Aggregator for method {} is not implemented. '
+                'Will use default one'.format(method))
 
     if config.data.type.lower() == 'hetero_nlp_tasks' and \
             not config.federate.atc_vanilla:
         from federatedscope.nlp.hetero_tasks.aggregator import ATCAggregator
         return ATCAggregator(model=model, config=config, device=device)
 
+    if aggregator_type == 'unlearn_fedavg':
+        return UnlearnFedAvgAggregator(model=model,
+                                       device=device,
+                                       config=config)
     if config.fedopt.use or aggregator_type == 'fedopt':
         return FedOptAggregator(config=config, model=model, device=device)
     elif aggregator_type == 'clients_avg':

@@ -47,6 +47,10 @@ def extend_training_cfg(cfg):
     cfg.train.is_enable_half = False
 
     # ---------------------------------------------------------------------- #
+    cfg.train.unlearn = CN()
+    cfg.train.unlearn.project_grads = False
+
+    # ---------------------------------------------------------------------- #
     # Finetune related options
     # ---------------------------------------------------------------------- #
     cfg.finetune = CN()
