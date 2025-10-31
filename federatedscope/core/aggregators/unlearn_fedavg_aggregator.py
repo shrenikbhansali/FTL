@@ -123,6 +123,29 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             self._last_bases = {}
 
         if stats:
+            if getattr(self.cfg, 'wandb', None) and self.cfg.wandb.use:
+                try:
+                    import wandb
+                    round_idx = agg_info.get('round')
+                    log_payload = {}
+                    for record in stats:
+                        sanitized = record['key'].replace('.', '/')
+                        perp_norm = record['perp_norm']
+                        parallel_norm = record['parallel_norm']
+                        ratio = perp_norm / max(parallel_norm, 1e-12)
+                        base_tag = f'unlearn/{sanitized}'
+                        log_payload[f'{base_tag}/perp_norm'] = perp_norm
+                        log_payload[f'{base_tag}/parallel_norm'] = parallel_norm
+                        log_payload[f'{base_tag}/perp_parallel_ratio'] = ratio
+                    if log_payload:
+                        wandb.log(log_payload, step=round_idx)
+                except ImportError:
+                    logger.warning(
+                        "cfg.wandb.use=True but wandb is not installed; skip "
+                        "logging UNLEARN stats to wandb.")
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to log UNLEARN stats to wandb: %s", exc)
             for record in stats:
                 logger.info('[UNLEARN] key=%s ||perp||_F=%.4e ||parallel||_F='
                             '%.4e mode=%s alpha=%.3f lambda=%.3f beta=%.3f '

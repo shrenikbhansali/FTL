@@ -2,7 +2,8 @@ import copy
 import logging
 import sys
 import pickle
-import os  # NEW
+import os
+from numbers import Number
 
 from federatedscope.core.message import Message
 from federatedscope.core.communication import StandaloneCommManager, \
@@ -274,6 +275,43 @@ class Client(BaseClient):
             logger.warning(f"[Client #{self.ID}] Saving final local artifacts failed: {e}")
     # ------------------------------------------------------------------------------------
 
+    def _log_client_metrics_to_wandb(self, metrics, sample_size):
+        """Send per-round client metrics to wandb when enabled."""
+        if not getattr(self._cfg, 'wandb', None) or not self._cfg.wandb.use:
+            return
+        try:
+            import wandb
+        except ImportError:
+            logger.warning(
+                "cfg.wandb.use=True but wandb is not installed; skip logging "
+                f"client #{self.ID} metrics to wandb.")
+            return
+
+        round_idx = self.state
+        base_tag = f'clients/client_{self.ID}'
+        payload = {f'{base_tag}/sample_size': sample_size}
+
+        for key, value in (metrics or {}).items():
+            scalar = None
+            if isinstance(value, Number):
+                scalar = float(value)
+            elif hasattr(value, 'item'):
+                try:
+                    scalar = float(value.item())
+                except (TypeError, ValueError):
+                    scalar = None
+            if scalar is None:
+                continue
+            payload[f'{base_tag}/{key}'] = scalar
+
+        if payload:
+            try:
+                wandb.log(payload, step=round_idx)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to log client #%s metrics to wandb: %s", self.ID,
+                    exc)
+
     def _gen_timestamp(self, init_timestamp, instance_number):
         if init_timestamp is None:
             return None
@@ -454,6 +492,7 @@ class Client(BaseClient):
                     role='Client #{}'.format(self.ID),
                     return_raw=True)
                 logger.info(train_log_res)
+                self._log_client_metrics_to_wandb(results, sample_size)
                 if self._cfg.wandb.use and self._cfg.wandb.client_train_info:
                     self._monitor.save_formatted_results(train_log_res,
                                                          save_file_name="")

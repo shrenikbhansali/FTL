@@ -61,18 +61,23 @@ class ClientsAvgAggregator(Aggregator):
         """
         Calculates the weighted average of models.
         """
+        if len(models) == 0:
+            return {}
+
         training_set_size = 0
         for i in range(len(models)):
             sample_size, _ = models[i]
             training_set_size += sample_size
 
         sample_size, avg_model = models[0]
+        total_clients = len(models)
+        use_uniform_weight = training_set_size <= 0
         for key in avg_model:
             for i in range(len(models)):
                 local_sample_size, local_model = models[i]
 
-                if self.cfg.federate.ignore_weight:
-                    weight = 1.0 / len(models)
+                if self.cfg.federate.ignore_weight or use_uniform_weight:
+                    weight = 1.0 / total_clients
                 elif self.cfg.federate.use_ss:
                     # When using secret sharing, what the server receives
                     # are sample_size * model_para

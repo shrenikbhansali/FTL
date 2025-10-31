@@ -56,3 +56,10 @@ eval:
   freq: 100
   metrics: ["loss"]
   count_flops: False
+
+wandb:
+  use: True
+  name_user: "sbhansali8-georgia-institute-of-technology"
+  name_project: "FTL-Dev"
+  online_track: True
+  client_train_info: False

@@ -68,6 +68,9 @@ train:
 dataloader:
   batch_size: 1
 
+grad:
+  grad_clip: 1.0
+
 eval:
   freq: 100
   metrics: ["loss"]
