@@ -6,20 +6,19 @@ import torch
 from federatedscope.core.aggregators.clients_avg_aggregator import \
     ClientsAvgAggregator
 from federatedscope.core.auxiliaries.utils import param2tensor
-from federatedscope.llm.algo import (chunked_discrimination,
-                                     maybe_clear_cuda,
+from federatedscope.llm.algo import (chunked_discrimination, maybe_clear_cuda,
                                      select_target_params,
                                      qr_basis_from_concat)
 
 logger = logging.getLogger(__name__)
 
-_ROBUST_DELTA_RULES = {'krum', 'normbounding', 'median', 'trimmedmean',
-                       'bulyan'}
+_ROBUST_DELTA_RULES = {
+    'krum', 'normbounding', 'median', 'trimmedmean', 'bulyan'
+}
 
 
 class UnlearnFedAvgAggregator(ClientsAvgAggregator):
     """FedAvg variant with UNLEARN-style subspace discrimination."""
-
     def __init__(self, model=None, device='cpu', config=None):
         super().__init__(model=model, device=device, config=config)
         self._device = torch.device(device) if not isinstance(
@@ -59,8 +58,7 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
 
         delta_mode = self._client_sends_delta()
         client_deltas = self._compute_client_deltas(client_states,
-                                                    cached_global,
-                                                    delta_mode)
+                                                    cached_global, delta_mode)
 
         target_keys = self._collect_target_keys(client_deltas)
         if not target_keys:
@@ -75,9 +73,8 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
         alpha = self.cfg.aggregator.unlearn.alpha_global
 
         relevant_deltas = {key: client_deltas[key] for key in target_keys}
-        unique_parts, shared_parts = self._discriminate(relevant_deltas,
-                                                        chunk_rows,
-                                                        proj_dtype)
+        unique_parts, shared_parts = self._discriminate(
+            relevant_deltas, chunk_rows, proj_dtype)
         updated_tensors = {}
         stats = []
         bases_payload = {} if self.cfg.aggregator.unlearn.send_Q_to_clients \
@@ -93,16 +90,13 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             if len(uniques) == 0:
                 continue
 
-            tilde = self._combine_unique_shared(
-                uniques, shareds, weights, mode, lambda_shrink, beta_shared,
-                proj_dtype)
-            aggregated_delta = self._weighted_sum(tilde, weights,
-                                                  proj_dtype).to(
-                                                      dtype=base_tensor.dtype)
-            updated_tensor = (base_tensor +
-                              alpha * aggregated_delta).to(
-                                  dtype=global_state[key].dtype,
-                                  device=global_state[key].device)
+            tilde = self._combine_unique_shared(uniques, shareds, weights,
+                                                mode, lambda_shrink,
+                                                beta_shared, proj_dtype)
+            aggregated_delta = self._weighted_sum(
+                tilde, weights, proj_dtype).to(dtype=base_tensor.dtype)
+            updated_tensor = (base_tensor + alpha * aggregated_delta).to(
+                dtype=global_state[key].dtype, device=global_state[key].device)
             updated_tensors[key] = updated_tensor
 
             key_stats = self._collect_stats(key, uniques, shareds)
@@ -135,7 +129,8 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                         ratio = perp_norm / max(parallel_norm, 1e-12)
                         base_tag = f'unlearn/{sanitized}'
                         log_payload[f'{base_tag}/perp_norm'] = perp_norm
-                        log_payload[f'{base_tag}/parallel_norm'] = parallel_norm
+                        log_payload[
+                            f'{base_tag}/parallel_norm'] = parallel_norm
                         log_payload[f'{base_tag}/perp_parallel_ratio'] = ratio
                     if log_payload:
                         wandb.log(log_payload, step=round_idx)
@@ -144,16 +139,16 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                         "cfg.wandb.use=True but wandb is not installed; skip "
                         "logging UNLEARN stats to wandb.")
                 except Exception as exc:
-                    logger.warning(
-                        "Failed to log UNLEARN stats to wandb: %s", exc)
+                    logger.warning("Failed to log UNLEARN stats to wandb: %s",
+                                   exc)
             for record in stats:
-                logger.info('[UNLEARN] key=%s ||perp||_F=%.4e ||parallel||_F='
-                            '%.4e mode=%s alpha=%.3f lambda=%.3f beta=%.3f '
-                            'chunk=%d dtype=%s device=%s',
-                            record['key'], record['perp_norm'],
-                            record['parallel_norm'], mode, alpha,
-                            lambda_shrink, beta_shared, chunk_rows,
-                            proj_dtype, self._device)
+                logger.info(
+                    '[UNLEARN] key=%s ||perp||_F=%.4e ||parallel||_F='
+                    '%.4e mode=%s alpha=%.3f lambda=%.3f beta=%.3f '
+                    'chunk=%d dtype=%s device=%s', record['key'],
+                    record['perp_norm'], record['parallel_norm'], mode, alpha,
+                    lambda_shrink, beta_shared, chunk_rows, proj_dtype,
+                    self._device)
 
         maybe_clear_cuda(self._device)
 
@@ -161,8 +156,8 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
         return base_result
 
     def _normalize_client_states(
-            self, models: List[Tuple[int, Dict]]) -> Tuple[List[int], List[
-                Dict[str, torch.Tensor]]]:
+        self, models: List[Tuple[int, Dict]]
+    ) -> Tuple[List[int], List[Dict[str, torch.Tensor]]]:
         sample_sizes, client_states = [], []
         for sample_size, payload in models:
             sample_sizes.append(sample_size)
@@ -203,11 +198,10 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             return True
         return self.cfg.aggregator.robust_rule in _ROBUST_DELTA_RULES
 
-    def _compute_client_deltas(self,
-                               client_states: List[Dict[str, torch.Tensor]],
-                               cached_global: Dict[str, torch.Tensor],
-                               delta_mode: bool) -> Dict[str, List[
-                                   torch.Tensor]]:
+    def _compute_client_deltas(
+            self, client_states: List[Dict[str, torch.Tensor]],
+            cached_global: Dict[str, torch.Tensor],
+            delta_mode: bool) -> Dict[str, List[torch.Tensor]]:
         deltas_ordered: Dict[str, List[torch.Tensor]] = {}
         with torch.no_grad():
             for name, reference in cached_global.items():
@@ -259,8 +253,9 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                                proj_dtype: str) -> List[torch.Tensor]:
         combined = []
         if mode not in {'shrink', 'mean_shared'}:
-            logger.warning('Unsupported UNLEARN mode %s; defaulting to '
-                           '"shrink".', mode)
+            logger.warning(
+                'Unsupported UNLEARN mode %s; defaulting to '
+                '"shrink".', mode)
             mode = 'shrink'
 
         work_dtype = self._resolve_proj_dtype(proj_dtype)
@@ -288,9 +283,7 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
         if not tensors:
             return torch.tensor(0.0, device=self._device)
         dtype = self._resolve_proj_dtype(proj_dtype)
-        acc = torch.zeros_like(tensors[0],
-                               dtype=dtype,
-                               device=self._device)
+        acc = torch.zeros_like(tensors[0], dtype=dtype, device=self._device)
         for tensor, weight in zip(tensors, weights):
             acc = acc + tensor.to(device=self._device, dtype=dtype) * weight
         return acc

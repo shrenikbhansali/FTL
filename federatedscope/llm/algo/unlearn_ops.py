@@ -3,9 +3,9 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 
 def select_target_params(
-        state_dict: Dict[str, torch.Tensor],
-        only_lora: bool,
-        target_modules: Iterable[str],
+    state_dict: Dict[str, torch.Tensor],
+    only_lora: bool,
+    target_modules: Iterable[str],
 ) -> Dict[str, torch.Tensor]:
     """Select parameters to operate on based on name heuristics."""
     selected = {}
@@ -23,8 +23,8 @@ def select_target_params(
 
 
 def compute_client_deltas(
-        client_states: List[Dict[str, torch.Tensor]],
-        server_state: Dict[str, torch.Tensor],
+    client_states: List[Dict[str, torch.Tensor]],
+    server_state: Dict[str, torch.Tensor],
 ) -> List[Dict[str, torch.Tensor]]:
     """Return deltas between client parameters and the reference server."""
     deltas = []
@@ -78,9 +78,9 @@ def project_rows(matrix: torch.Tensor,
 
 
 def discriminate_one_key(
-        deltas: List[torch.Tensor],
-        chunk_rows: int,
-        proj_dtype: torch.dtype,
+    deltas: List[torch.Tensor],
+    chunk_rows: int,
+    proj_dtype: torch.dtype,
 ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
     """Split each delta into parallel and orthogonal components."""
     if not deltas:
@@ -124,9 +124,9 @@ def discriminate_one_key(
 
 
 def chunked_discrimination(
-        deltas_by_client: Dict[str, List[torch.Tensor]],
-        chunk_rows: int,
-        proj_dtype: str,
+    deltas_by_client: Dict[str, List[torch.Tensor]],
+    chunk_rows: int,
+    proj_dtype: str,
 ) -> Tuple[Dict[str, List[torch.Tensor]], Dict[str, List[torch.Tensor]]]:
     """Apply discrimination across all parameter keys."""
     dtype = _resolve_proj_dtype(proj_dtype)

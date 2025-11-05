@@ -86,9 +86,8 @@ def get_aggregator(method, model=None, device=None, online=False, config=None):
             aggregator_type = constants.AGGREGATOR_TYPE[method.lower()]
         else:
             aggregator_type = "clients_avg"
-            logger.warning(
-                'Aggregator for method {} is not implemented. '
-                'Will use default one'.format(method))
+            logger.warning('Aggregator for method {} is not implemented. '
+                           'Will use default one'.format(method))
 
     if config.data.type.lower() == 'hetero_nlp_tasks' and \
             not config.federate.atc_vanilla:

@@ -188,12 +188,12 @@ class Client(BaseClient):
                 'host': self.comm_manager.host,
                 'port': self.comm_manager.port
             }
-    
+
     def _save_client_ckpt_final(self):
         """Write a client-specific .ckpt compatible with FS-LLM eval."""
         try:
             path = add_prefix_to_path(f'client_{self.ID}_',
-                                    self._cfg.federate.save_to)
+                                      self._cfg.federate.save_to)
             if self.ds_rank == 0:
                 self.trainer.save_model(path, self.state)
                 logger.info(f"[Client #{self.ID}] Saved final ckpt to {path}")
@@ -236,9 +236,8 @@ class Client(BaseClient):
                 # Pass current round state for completeness; many trainers
                 # ignore it in naming.
                 self.trainer.save_model(ckpt_path, self.state)
-                logger.info(
-                    f"[Client #{self.ID}] Saved local FS-LLM ckpt to:"
-                    f" {ckpt_path}")
+                logger.info(f"[Client #{self.ID}] Saved local FS-LLM ckpt to:"
+                            f" {ckpt_path}")
             else:
                 logger.warning(
                     f"[Client #{self.ID}] trainer.save_model not available; "
@@ -262,9 +261,8 @@ class Client(BaseClient):
                     try:
                         model_obj.save_pretrained(adapter_dir)
                         saved_adapter = True
-                        logger.info(
-                            f"[Client #{self.ID}] Saved adapter via "
-                            f"save_pretrained to: {adapter_dir}")
+                        logger.info(f"[Client #{self.ID}] Saved adapter via "
+                                    f"save_pretrained to: {adapter_dir}")
                     except Exception as e:
                         logger.warning(
                             f"[Client #{self.ID}] save_pretrained failed: {e}")
@@ -279,9 +277,9 @@ class Client(BaseClient):
                         except Exception:
                             # last resort: full state_dict (may be large)
                             state = model_obj.state_dict()
-                        torch.save(state,
-                                   os.path.join(client_root,
-                                                "adapter.safetensors"))
+                        torch.save(
+                            state,
+                            os.path.join(client_root, "adapter.safetensors"))
                         saved_adapter = True
                         logger.info(
                             f"[Client #{self.ID}] Saved adapter state_dict to:"
@@ -294,6 +292,7 @@ class Client(BaseClient):
             logger.warning(
                 f"[Client #{self.ID}] Saving final local artifacts failed: "
                 f"{e}")
+
     # End artifact helper block
 
     def _log_client_metrics_to_wandb(self, metrics, sample_size):
@@ -329,9 +328,8 @@ class Client(BaseClient):
             try:
                 wandb.log(payload, step=round_idx)
             except Exception as exc:
-                logger.warning(
-                    "Failed to log client #%s metrics to wandb: %s", self.ID,
-                    exc)
+                logger.warning("Failed to log client #%s metrics to wandb: %s",
+                               self.ID, exc)
 
     def _gen_timestamp(self, init_timestamp, instance_number):
         if init_timestamp is None:

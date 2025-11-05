@@ -62,6 +62,7 @@ def configure_run(run_type: str) -> None:
             "baselines": "fsllm-eval-baselines",
         }
 
+
 # ---------------------------------------------------------------------------
 # Data definitions
 # ---------------------------------------------------------------------------
@@ -69,10 +70,10 @@ def configure_run(run_type: str) -> None:
 
 @dataclass(frozen=True)
 class EvalKey:
-    group: str         # global | clients | baselines
-    model: str         # llama2 | qwen_moe | ...
-    variant: str       # global | client_1 | code_local | ...
-    task: str          # mmlu | gsm8k | code
+    group: str  # global | clients | baselines
+    model: str  # llama2 | qwen_moe | ...
+    variant: str  # global | client_1 | code_local | ...
+    task: str  # mmlu | gsm8k | code
 
 
 GLOBAL_INDEX = {
@@ -85,28 +86,64 @@ GLOBAL_INDEX = {
 }
 
 CLIENT_MODELS = [
-    "llama2", "llama2", "llama2",
-    "llama2", "llama2", "llama2",
-    "llama2", "llama2", "llama2",
-    "qwen_moe", "qwen_moe", "qwen_moe",
-    "qwen_moe", "qwen_moe", "qwen_moe",
-    "qwen_moe", "qwen_moe", "qwen_moe",
+    "llama2",
+    "llama2",
+    "llama2",
+    "llama2",
+    "llama2",
+    "llama2",
+    "llama2",
+    "llama2",
+    "llama2",
+    "qwen_moe",
+    "qwen_moe",
+    "qwen_moe",
+    "qwen_moe",
+    "qwen_moe",
+    "qwen_moe",
+    "qwen_moe",
+    "qwen_moe",
+    "qwen_moe",
 ]
 CLIENT_IDS = [
-    1, 1, 1,
-    2, 2, 2,
-    3, 3, 3,
-    1, 1, 1,
-    2, 2, 2,
-    3, 3, 3,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    3,
+    3,
+    3,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    3,
+    3,
+    3,
 ]
 CLIENT_TASKS = [
-    "mmlu", "gsm8k", "code",
-    "mmlu", "gsm8k", "code",
-    "mmlu", "gsm8k", "code",
-    "mmlu", "gsm8k", "code",
-    "mmlu", "gsm8k", "code",
-    "mmlu", "gsm8k", "code",
+    "mmlu",
+    "gsm8k",
+    "code",
+    "mmlu",
+    "gsm8k",
+    "code",
+    "mmlu",
+    "gsm8k",
+    "code",
+    "mmlu",
+    "gsm8k",
+    "code",
+    "mmlu",
+    "gsm8k",
+    "code",
+    "mmlu",
+    "gsm8k",
+    "code",
 ]
 
 CLIENT_INDEX = {
@@ -119,11 +156,19 @@ CLIENT_INDEX = {
     for idx in range(len(CLIENT_MODELS))
 }
 
-BASE_MODELS = ["llama2", "llama2", "llama2", "llama2",
-               "qwen_moe", "qwen_moe", "qwen_moe", "qwen_moe"]
+BASE_MODELS = [
+    "llama2", "llama2", "llama2", "llama2", "qwen_moe", "qwen_moe", "qwen_moe",
+    "qwen_moe"
+]
 BASE_VARIANTS = [
-    "code_local", "gsm8k_local", "instr_local", "all_in_one",
-    "code_local", "gsm8k_local", "instr_local", "all_in_one",
+    "code_local",
+    "gsm8k_local",
+    "instr_local",
+    "all_in_one",
+    "code_local",
+    "gsm8k_local",
+    "instr_local",
+    "all_in_one",
 ]
 BASE_TASKS = ["mmlu", "gsm8k", "code"]
 
@@ -138,6 +183,7 @@ for idx in range(24):
         BASE_TASKS[tid],
     )
 
+
 def client_ckpt(model: str, client_id: str) -> str:
     prefix = CLIENT_PREFIX[model]
     return f"{prefix}/clients/{client_id}/{client_id}.ckpt"
@@ -146,6 +192,7 @@ def client_ckpt(model: str, client_id: str) -> str:
 def baseline_ckpt(model: str, variant: str) -> str:
     root = BASELINE_PREFIX[model]
     return f"{root}/{model}_{variant}.ckpt"
+
 
 # ---------------------------------------------------------------------------
 # Helpers for parsing logs
@@ -193,15 +240,19 @@ def detect_error(text: str) -> Optional[str]:
     ]
     for marker in error_markers:
         if marker in text:
-            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            lines = [
+                line.strip() for line in text.splitlines() if line.strip()
+            ]
             tail = " | ".join(lines[-5:])
             return marker if not tail else tail[-200:]
     return None
 
 
-def collect_log_metrics(prefix: str,
-                        index_map: Dict[int, EvalKey]) -> Dict[EvalKey, Tuple[Optional[float], str, Optional[str]]]:
-    results: Dict[EvalKey, List[Tuple[float, Optional[float], str, Optional[str]]]] = {}
+def collect_log_metrics(
+    prefix: str, index_map: Dict[int, EvalKey]
+) -> Dict[EvalKey, Tuple[Optional[float], str, Optional[str]]]:
+    results: Dict[EvalKey, List[Tuple[float, Optional[float], str,
+                                      Optional[str]]]] = {}
     pattern = re.compile(rf"{re.escape(prefix)}_(\d+)_([0-9]+)\.out$")
 
     for path in LOG_DIR.glob(f"{prefix}_*.out"):
@@ -223,8 +274,7 @@ def collect_log_metrics(prefix: str,
 
         timestamp = path.stat().st_mtime
         results.setdefault(key, []).append(
-            (timestamp, metric, str(path.relative_to(ROOT)), error_msg)
-        )
+            (timestamp, metric, str(path.relative_to(ROOT)), error_msg))
 
     final: Dict[EvalKey, Tuple[Optional[float], str, Optional[str]]] = {}
     for key, entries in results.items():
@@ -241,6 +291,7 @@ def collect_log_metrics(prefix: str,
             chosen = (metric, source, error_msg)
         final[key] = chosen
     return final
+
 
 # ---------------------------------------------------------------------------
 # Aggregation
@@ -299,11 +350,15 @@ def build_expected_entries() -> List[EvalKey]:
     return entries
 
 
-def aggregate() -> Tuple[List[Tuple[EvalKey, Optional[float], str, Optional[str]]], List[EvalKey]]:
+def aggregate() -> Tuple[List[Tuple[EvalKey, Optional[float], str,
+                                    Optional[str]]], List[EvalKey]]:
     mmlu_metrics = load_mmlu_metrics()
-    global_log_metrics = collect_log_metrics(LOG_PREFIXES["global"], GLOBAL_INDEX)
-    client_log_metrics = collect_log_metrics(LOG_PREFIXES["clients"], CLIENT_INDEX)
-    base_log_metrics = collect_log_metrics(LOG_PREFIXES["baselines"], BASE_INDEX)
+    global_log_metrics = collect_log_metrics(LOG_PREFIXES["global"],
+                                             GLOBAL_INDEX)
+    client_log_metrics = collect_log_metrics(LOG_PREFIXES["clients"],
+                                             CLIENT_INDEX)
+    base_log_metrics = collect_log_metrics(LOG_PREFIXES["baselines"],
+                                           BASE_INDEX)
 
     rows: List[Tuple[EvalKey, Optional[float], str, Optional[str]]] = []
     missing: List[EvalKey] = []
@@ -314,7 +369,8 @@ def aggregate() -> Tuple[List[Tuple[EvalKey, Optional[float], str, Optional[str]
         note = None
 
         if key.task == "mmlu":
-            metric, source = mmlu_metrics.get(key, (None, str(EVAL_RESULT_DIR.relative_to(ROOT))))
+            metric, source = mmlu_metrics.get(
+                key, (None, str(EVAL_RESULT_DIR.relative_to(ROOT))))
             if source is None:
                 source = str(EVAL_RESULT_DIR.relative_to(ROOT))
         else:
@@ -332,13 +388,17 @@ def aggregate() -> Tuple[List[Tuple[EvalKey, Optional[float], str, Optional[str]
         rows.append((key, metric, source, note))
     return rows, missing
 
+
 # ---------------------------------------------------------------------------
 # Presentation
 # ---------------------------------------------------------------------------
 
 
-def format_table(rows: List[Tuple[EvalKey, Optional[float], str, Optional[str]]]) -> str:
-    headers = ("Group", "Model", "Variant", "Task", "Metric", "Status/Notes", "Source")
+def format_table(
+        rows: List[Tuple[EvalKey, Optional[float], str,
+                         Optional[str]]]) -> str:
+    headers = ("Group", "Model", "Variant", "Task", "Metric", "Status/Notes",
+               "Source")
     formatted_rows = []
 
     for key, metric, source, note in rows:
@@ -364,9 +424,7 @@ def format_table(rows: List[Tuple[EvalKey, Optional[float], str, Optional[str]]]
 
     def fmt_row(row: Tuple[str, ...]) -> str:
         return " | ".join(
-            str(cell).ljust(width)
-            for cell, width in zip(row, widths)
-        )
+            str(cell).ljust(width) for cell, width in zip(row, widths))
 
     lines = [fmt_row(headers), fmt_row(tuple("-" * w for w in widths))]
     for row in formatted_rows:
@@ -376,13 +434,13 @@ def format_table(rows: List[Tuple[EvalKey, Optional[float], str, Optional[str]]]
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Summarize evaluation outputs and flag missing results.",
-    )
+        description="Summarize evaluation outputs and flag missing results.", )
     parser.add_argument(
         "--run-type",
         choices=["smoke", "full"],
         default="smoke",
-        help="Which pipeline run to summarize (smoke=default, full=scaled runs)",
+        help=
+        "Which pipeline run to summarize (smoke=default, full=scaled runs)",
     )
     parser.add_argument(
         "--model",

@@ -32,8 +32,9 @@ def extend_aggregator_cfg(cfg):
     cfg.aggregator.unlearn.beta_shared = 0.2
     cfg.aggregator.unlearn.alpha_global = 1.0
     cfg.aggregator.unlearn.only_lora = True
-    cfg.aggregator.unlearn.target_modules = ['q_proj', 'k_proj', 'v_proj',
-                                             'o_proj']
+    cfg.aggregator.unlearn.target_modules = [
+        'q_proj', 'k_proj', 'v_proj', 'o_proj'
+    ]
     cfg.aggregator.unlearn.proj_dtype = 'float32'
     cfg.aggregator.unlearn.chunk_rows = 4096
     cfg.aggregator.unlearn.send_Q_to_clients = False
