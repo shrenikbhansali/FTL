@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # tools/build_composite_llm3.py
-import argparse, json, random, os
+import argparse
+import json
+import os
+import random
 from datasets import load_dataset
 
 def to_record(instruction, inp, output, category, source=None):
@@ -27,7 +30,9 @@ def load_chat_dolly(max_n=None, seed=42):
             source="dolly-15k"
         ))
     if max_n:
-        random.seed(seed); random.shuffle(data); data = data[:max_n]
+        random.seed(seed)
+        random.shuffle(data)
+        data = data[:max_n]
     return data
 
 def load_code_alpaca(max_n=None, seed=42):
@@ -42,7 +47,9 @@ def load_code_alpaca(max_n=None, seed=42):
             source="codealpaca-20k"
         ))
     if max_n:
-        random.seed(seed); random.shuffle(data); data = data[:max_n]
+        random.seed(seed)
+        random.shuffle(data)
+        data = data[:max_n]
     return data
 
 def load_gsm8k(max_n=None, seed=42):
@@ -61,7 +68,9 @@ def load_gsm8k(max_n=None, seed=42):
             source="gsm8k"
         ))
     if max_n:
-        random.seed(seed); random.shuffle(data); data = data[:max_n]
+        random.seed(seed)
+        random.shuffle(data)
+        data = data[:max_n]
     return data
 
 def main():
@@ -98,7 +107,8 @@ def main():
 
     # Composite for FS-LLM + MetaSplitter
     composite = chat + code + math
-    random.seed(args.seed); random.shuffle(composite)
+    random.seed(args.seed)
+    random.shuffle(composite)
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(composite, f, ensure_ascii=False)
 
