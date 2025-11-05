@@ -198,7 +198,8 @@ class Client(BaseClient):
                 self.trainer.save_model(path, self.state)
                 logger.info(f"[Client #{self.ID}] Saved final ckpt to {path}")
         except Exception as e:
-            logger.warning(f"[Client #{self.ID}] Failed saving final ckpt: {e}")
+            logger.warning(
+                f"[Client #{self.ID}] Failed saving final ckpt: {e}")
 
     # Helper to save client artifacts at the end of training
     def _save_final_client_artifacts(self):
@@ -228,10 +229,12 @@ class Client(BaseClient):
             client_root = os.path.join(base, "clients", f"client_{self.ID}")
             os.makedirs(client_root, exist_ok=True)
 
-            # 1) Save an FS-LLM style checkpoint (works with existing eval scripts)
+            # 1) Save an FS-LLM style checkpoint
+            #    (works with existing eval scripts)
             ckpt_path = os.path.join(client_root, f"client_{self.ID}.ckpt")
             if hasattr(self.trainer, "save_model"):
-                # Pass current round state for completeness; many trainers ignore it in naming.
+                # Pass current round state for completeness; many trainers
+                # ignore it in naming.
                 self.trainer.save_model(ckpt_path, self.state)
                 logger.info(
                     f"[Client #{self.ID}] Saved local FS-LLM ckpt to:"
@@ -241,7 +244,8 @@ class Client(BaseClient):
                     f"[Client #{self.ID}] trainer.save_model not available; "
                     "skipping FS-LLM ckpt.")
 
-            # 2) Save a PEFT adapter directory if possible (handy for HF-native eval)
+            # 2) Save a PEFT adapter directory if possible
+            #    (handy for HF-native eval)
             adapter_dir = os.path.join(client_root, "adapter")
             model_obj = None
             for cand in ["model", "_model"]:
@@ -268,7 +272,7 @@ class Client(BaseClient):
                 # Fallback: save PEFT adapter state dict
                 if not saved_adapter:
                     try:
-                        import torch  # local import to avoid unconditional dependency
+                        import torch  # local import to avoid extra deps
                         try:
                             from peft import get_peft_model_state_dict
                             state = get_peft_model_state_dict(model_obj)
@@ -288,7 +292,8 @@ class Client(BaseClient):
                             f"state: {e}")
         except Exception as e:
             logger.warning(
-                f"[Client #{self.ID}] Saving final local artifacts failed: {e}")
+                f"[Client #{self.ID}] Saving final local artifacts failed: "
+                f"{e}")
     # End artifact helper block
 
     def _log_client_metrics_to_wandb(self, metrics, sample_size):
