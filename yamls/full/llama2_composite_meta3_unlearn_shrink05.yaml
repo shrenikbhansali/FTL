@@ -56,7 +56,7 @@ trainer:
 train:
   local_update_steps: 30
   batch_or_epoch: batch
-  is_enable_half: True
+  is_enable_half: False
   unlearn:
     project_grads: False
   optimizer:

@@ -56,12 +56,15 @@ def qr_basis_from_concat(matrix: torch.Tensor,
     if matrix.numel() == 0 or matrix.shape[0] == 0:
         return None
     work = matrix.to(dtype=proj_dtype)
+    if not torch.isfinite(work).all():
+        work = torch.nan_to_num(work, nan=0.0, posinf=0.0, neginf=0.0)
     if torch.linalg.norm(work) <= eps:
         return None
     try:
         _, singular_values, vh = torch.linalg.svd(work, full_matrices=False)
-    except RuntimeError:
+    except (RuntimeError, torch.linalg.LinAlgError):
         work = work + eps * torch.randn_like(work)
+        work = torch.nan_to_num(work, nan=0.0, posinf=0.0, neginf=0.0)
         _, singular_values, vh = torch.linalg.svd(work, full_matrices=False)
     mask = singular_values > eps
     if mask.sum() == 0:

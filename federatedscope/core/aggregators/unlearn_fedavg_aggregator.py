@@ -204,16 +204,28 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             delta_mode: bool) -> Dict[str, List[torch.Tensor]]:
         deltas_ordered: Dict[str, List[torch.Tensor]] = {}
         with torch.no_grad():
-            for name, reference in cached_global.items():
+            all_keys = set(cached_global.keys())
+            for state in client_states:
+                all_keys.update(state.keys())
+
+            for name in all_keys:
+                reference = cached_global.get(name)
+                if reference is None:
+                    continue
                 per_client: List[torch.Tensor] = []
                 ref_tensor = reference.to(device=self._device)
                 for state in client_states:
                     client_tensor = state.get(name)
                     if client_tensor is None:
-                        tensor = torch.zeros_like(ref_tensor)
+                        tensor = ref_tensor.clone()
                     else:
                         tensor = client_tensor.to(device=self._device,
                                                   dtype=ref_tensor.dtype)
+                    if not torch.isfinite(tensor).all():
+                        logger.warning('Detected non-finite tensor in client '
+                                       'update for %s; substituting reference '
+                                       'weights.', name)
+                        tensor = ref_tensor.clone()
                     if delta_mode:
                         per_client.append(tensor)
                     else:
