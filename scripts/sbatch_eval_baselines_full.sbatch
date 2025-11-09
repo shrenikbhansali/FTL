@@ -6,12 +6,12 @@
 #SBATCH --time=08:00:00
 #SBATCH --output=logs/%x_%A_%a.out
 #SBATCH --error=logs/%x_%A_%a.err
-#SBATCH --array=0-23
+#SBATCH --array=0-29
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=sbhansali8@gatech.edu
 
-MODELS=(llama2 llama2 llama2 llama2 qwen_moe qwen_moe qwen_moe qwen_moe)
-VARIANTS=(code_local gsm8k_local instr_local all_in_one code_local gsm8k_local instr_local all_in_one)
+MODELS=(llama2 llama2 llama2 llama2 llama2 qwen_moe qwen_moe qwen_moe qwen_moe qwen_moe)
+VARIANTS=(code_local gsm8k_local instr_local all_in_one interleaved_all_in_one code_local gsm8k_local instr_local all_in_one interleaved_all_in_one)
 TASKS=(mmlu gsm8k code)
 
 mid=$(( SLURM_ARRAY_TASK_ID / 3 ))

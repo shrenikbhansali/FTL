@@ -81,67 +81,74 @@ submit_sbatch() {
 
 run mkdir -p logs results_full
 
-UNLEARN_SBATCH="$SBATCH_DIR/sbatch_train_llama_unlearn_full.sbatch"
-if [[ ! -f "$UNLEARN_SBATCH" ]]; then
-  log "ERROR: Unlearn training sbatch not found at $UNLEARN_SBATCH"
-  exit 1
-fi
+require_file() {
+  local path=$1
+  local label=$2
+  if [[ ! -f "$path" ]]; then
+    log "ERROR: Missing $label at $path"
+    exit 1
+  fi
+}
 
-log "Submitting full-scale llama training jobs..."
-LLAMA_JOB=""
 LLAMA_SBATCH="$SBATCH_DIR/sbatch_train_llama_full.sbatch"
-if [[ -f "$LLAMA_SBATCH" ]]; then
-  LLAMA_JOB=$(submit_sbatch "train-llama-full" "$LLAMA_SBATCH")
-else
-  log "Standard LLaMA training sbatch missing ($LLAMA_SBATCH); skipping standard training/evals."
-fi
-
-UNLEARN_JOB=$(submit_sbatch "train-llama-unlearn-full" "$UNLEARN_SBATCH")
-
-BASE_JOB=""
+LLAMA_UNLEARN_SBATCH="$SBATCH_DIR/sbatch_train_llama_unlearn_full.sbatch"
+QWEN_SBATCH="$SBATCH_DIR/sbatch_train_qwen_moe_full.sbatch"
+QWEN_UNLEARN_SBATCH="$SBATCH_DIR/sbatch_train_qwen_unlearn_full.sbatch"
 BASE_SBATCH="$SBATCH_DIR/sbatch_train_baselines_full.sbatch"
-if [[ -f "$BASE_SBATCH" ]]; then
-  BASE_JOB=$(submit_sbatch "train-baselines-full" "$BASE_SBATCH")
-else
-  log "Baseline training sbatch missing ($BASE_SBATCH); skipping baseline training/evals."
-fi
+EVAL_GLOBAL_SBATCH="$SBATCH_DIR/sbatch_eval_global_full.sbatch"
+EVAL_CLIENT_SBATCH="$SBATCH_DIR/sbatch_eval_clients_full.sbatch"
+EVAL_BASE_SBATCH="$SBATCH_DIR/sbatch_eval_baselines_full.sbatch"
+EVAL_UNLEARN_GLOBAL_SBATCH="$SBATCH_DIR/sbatch_eval_unlearn_global_full.sbatch"
+EVAL_UNLEARN_CLIENT_SBATCH="$SBATCH_DIR/sbatch_eval_unlearn_clients_full.sbatch"
+
+require_file "$LLAMA_SBATCH" "standard LLaMA training sbatch"
+require_file "$LLAMA_UNLEARN_SBATCH" "LLaMA unlearn training sbatch"
+require_file "$QWEN_SBATCH" "standard Qwen training sbatch"
+require_file "$QWEN_UNLEARN_SBATCH" "Qwen unlearn training sbatch"
+require_file "$BASE_SBATCH" "baseline training sbatch"
+require_file "$EVAL_GLOBAL_SBATCH" "global evaluation sbatch"
+require_file "$EVAL_CLIENT_SBATCH" "client evaluation sbatch"
+require_file "$EVAL_BASE_SBATCH" "baseline evaluation sbatch"
+require_file "$EVAL_UNLEARN_GLOBAL_SBATCH" "unlearn global evaluation sbatch"
+require_file "$EVAL_UNLEARN_CLIENT_SBATCH" "unlearn client evaluation sbatch"
+
+log "Submitting baseline training (all-in-one scenarios)..."
+BASE_JOB=$(submit_sbatch "train-baselines-full" "$BASE_SBATCH")
+
+log "Submitting federated training jobs..."
+LLAMA_JOB=$(submit_sbatch "train-llama-full" "$LLAMA_SBATCH")
+QWEN_JOB=$(submit_sbatch "train-qwen-full" "$QWEN_SBATCH")
+LLAMA_UNLEARN_JOB=$(submit_sbatch "train-llama-unlearn-full" "$LLAMA_UNLEARN_SBATCH")
+QWEN_UNLEARN_JOB=$(submit_sbatch "train-qwen-unlearn-full" "$QWEN_UNLEARN_SBATCH")
 
 if [[ $SKIP_GLOBAL_EVAL -eq 0 ]]; then
   log "Submitting global evaluations..."
-  if [[ -n "$LLAMA_JOB" ]]; then
-    submit_sbatch "eval-global-full-llama" --dependency=afterok:${LLAMA_JOB} --array=0-2 "$SBATCH_DIR/sbatch_eval_global_full.sbatch"
-  else
-    log "Skipping standard global evaluation; no corresponding training job."
-  fi
-  submit_sbatch "eval-global-unlearn" --dependency=afterok:${UNLEARN_JOB} "$SBATCH_DIR/sbatch_eval_unlearn_global_full.sbatch"
+  submit_sbatch "eval-global-llama" --dependency=afterok:${LLAMA_JOB} --array=0-2 "$EVAL_GLOBAL_SBATCH"
+  submit_sbatch "eval-global-qwen" --dependency=afterok:${QWEN_JOB} --array=3-5 "$EVAL_GLOBAL_SBATCH"
+  submit_sbatch "eval-global-unlearn-llama" --dependency=afterok:${LLAMA_UNLEARN_JOB} --array=0-5 "$EVAL_UNLEARN_GLOBAL_SBATCH"
+  submit_sbatch "eval-global-unlearn-qwen" --dependency=afterok:${QWEN_UNLEARN_JOB} --array=6-11 "$EVAL_UNLEARN_GLOBAL_SBATCH"
 else
   log "Skipping global evaluations."
 fi
 
 if [[ $SKIP_CLIENT_EVAL -eq 0 ]]; then
   log "Submitting client evaluations..."
-  if [[ -n "$LLAMA_JOB" ]]; then
-    submit_sbatch "eval-clients-full-llama" --dependency=afterok:${LLAMA_JOB} --array=0-8 "$SBATCH_DIR/sbatch_eval_clients_full.sbatch"
-  else
-    log "Skipping standard client evaluation; no corresponding training job."
-  fi
-  submit_sbatch "eval-clients-unlearn" --dependency=afterok:${UNLEARN_JOB} "$SBATCH_DIR/sbatch_eval_unlearn_clients_full.sbatch"
+  submit_sbatch "eval-clients-llama" --dependency=afterok:${LLAMA_JOB} --array=0-8 "$EVAL_CLIENT_SBATCH"
+  submit_sbatch "eval-clients-qwen" --dependency=afterok:${QWEN_JOB} --array=9-17 "$EVAL_CLIENT_SBATCH"
+  submit_sbatch "eval-clients-unlearn-llama" --dependency=afterok:${LLAMA_UNLEARN_JOB} --array=0-17 "$EVAL_UNLEARN_CLIENT_SBATCH"
+  submit_sbatch "eval-clients-unlearn-qwen" --dependency=afterok:${QWEN_UNLEARN_JOB} --array=18-35 "$EVAL_UNLEARN_CLIENT_SBATCH"
 else
   log "Skipping client evaluations."
 fi
 
 if [[ $SKIP_BASELINE_EVAL -eq 0 ]]; then
   log "Submitting baseline evaluations..."
-  if [[ -n "$BASE_JOB" ]]; then
-    submit_sbatch "eval-baselines-full" --dependency=afterok:${BASE_JOB} "$SBATCH_DIR/sbatch_eval_baselines_full.sbatch"
-  else
-    log "Skipping baseline evaluations; no baseline training job."
-  fi
+  submit_sbatch "eval-baselines-full" --dependency=afterok:${BASE_JOB} "$EVAL_BASE_SBATCH"
 else
   log "Skipping baseline evaluations."
 fi
 
-log "LLaMA + UNLEARN pipeline submissions complete."
+log "LLaMA/Qwen pipeline submissions complete."
 if [[ $DRY_RUN -eq 1 ]]; then
   log "Dry-run requested; no jobs were queued."
 fi

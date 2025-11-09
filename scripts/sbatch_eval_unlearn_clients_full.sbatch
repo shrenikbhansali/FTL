@@ -6,33 +6,51 @@
 #SBATCH --time=08:00:00
 #SBATCH --output=logs/%x_%A_%a.out
 #SBATCH --error=logs/%x_%A_%a.err
-#SBATCH --array=0-17
+#SBATCH --array=0-35
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=sbhansali8@gatech.edu
 
+declare -a MODELS=(
+  "llama2" "llama2" "llama2"  "llama2" "llama2" "llama2"  "llama2" "llama2" "llama2"
+  "llama2" "llama2" "llama2"  "llama2" "llama2" "llama2"  "llama2" "llama2" "llama2"
+  "qwen15moe" "qwen15moe" "qwen15moe"  "qwen15moe" "qwen15moe" "qwen15moe"  "qwen15moe" "qwen15moe" "qwen15moe"
+  "qwen15moe" "qwen15moe" "qwen15moe"  "qwen15moe" "qwen15moe" "qwen15moe"  "qwen15moe" "qwen15moe" "qwen15moe"
+)
 declare -a TAGS=(
+  "unlearn" "unlearn" "unlearn"  "unlearn" "unlearn" "unlearn"  "unlearn" "unlearn" "unlearn"
+  "unlearn_shrink05" "unlearn_shrink05" "unlearn_shrink05"  "unlearn_shrink05" "unlearn_shrink05" "unlearn_shrink05"  "unlearn_shrink05" "unlearn_shrink05" "unlearn_shrink05"
   "unlearn" "unlearn" "unlearn"  "unlearn" "unlearn" "unlearn"  "unlearn" "unlearn" "unlearn"
   "unlearn_shrink05" "unlearn_shrink05" "unlearn_shrink05"  "unlearn_shrink05" "unlearn_shrink05" "unlearn_shrink05"  "unlearn_shrink05" "unlearn_shrink05" "unlearn_shrink05"
 )
 declare -a CLIENTS=(
   1 1 1  2 2 2  3 3 3
   1 1 1  2 2 2  3 3 3
+  1 1 1  2 2 2  3 3 3
+  1 1 1  2 2 2  3 3 3
 )
 declare -a TASKS=(
+  "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"
+  "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"
   "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"
   "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"
 )
 
 IDX=$SLURM_ARRAY_TASK_ID
+MODEL=${MODELS[$IDX]}
 TAG=${TAGS[$IDX]}
 CID=${CLIENTS[$IDX]}
 TASK=${TASKS[$IDX]}
 
-if [[ "$TAG" == "unlearn" ]]; then
-  CKPT="ckpts/full/llama2_composite_meta3_unlearn/clients/client_${CID}/client_${CID}.ckpt"
+if [[ "$MODEL" == "llama2" ]]; then
+  BASE_PATH="ckpts/full/llama2_composite_meta3_${TAG}"
+  HF_TYPE='meta-llama/Llama-2-7b-hf@huggingface_llm'
+  FP16=False
 else
-  CKPT="ckpts/full/llama2_composite_meta3_unlearn_shrink05/clients/client_${CID}/client_${CID}.ckpt"
+  BASE_PATH="ckpts/full/qwen15moe_composite_meta3_${TAG}"
+  HF_TYPE='Qwen/Qwen1.5-MoE-A2.7B@huggingface_llm'
+  FP16=False
 fi
+CKPT="${BASE_PATH}/clients/client_${CID}/client_${CID}.ckpt"
 
 module load anaconda3
 conda activate fs-llm
@@ -40,7 +58,7 @@ export HF_HOME=/home/hice1/sbhansali8/scratch
 cd /home/hice1/sbhansali8/scratch/FederatedScope
 
 ROOT=$(pwd)
-RES_DIR=$ROOT/results_full/clients/llama2_${TAG}/client_${CID}/${TASK}/$SLURM_JOB_ID
+RES_DIR=$ROOT/results_full/clients/${MODEL}_${TAG}/client_${CID}/${TASK}/$SLURM_JOB_ID
 mkdir -p "$RES_DIR"
 
 if [[ "$TASK" == "code" ]]; then
@@ -57,7 +75,7 @@ if [[ "$TASK" == "code" ]]; then
   fi
 fi
 
-EVAL_YAML="$RES_DIR/eval_llama2_${TAG}_c${CID}_${TASK}.yaml"
+EVAL_YAML="$RES_DIR/eval_${MODEL}_${TAG}_c${CID}_${TASK}.yaml"
 cat > "$EVAL_YAML" <<EOF2
 use_gpu: True
 device: 0
@@ -65,7 +83,7 @@ outdir: "$RES_DIR/exp"
 federate:
   save_to: "$CKPT"
 model:
-  type: "meta-llama/Llama-2-7b-hf@huggingface_llm"
+  type: "$HF_TYPE"
 llm:
   tok_len: 1024
   adapter:
@@ -76,7 +94,7 @@ llm:
          target_modules: ["q_proj","k_proj","v_proj","o_proj"],
          modules_to_save: ["embed_tokens","lm_head"]}
 train:
-  is_enable_half: False
+  is_enable_half: $FP16
 eval:
   max_samples: 200
 EOF2
