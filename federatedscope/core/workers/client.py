@@ -2,7 +2,8 @@ import copy
 import logging
 import sys
 import pickle
-import os  # NEW
+import os
+from numbers import Number
 
 from federatedscope.core.message import Message
 from federatedscope.core.communication import StandaloneCommManager, \
@@ -187,24 +188,27 @@ class Client(BaseClient):
                 'host': self.comm_manager.host,
                 'port': self.comm_manager.port
             }
-    
+
     def _save_client_ckpt_final(self):
         """Write a client-specific .ckpt compatible with FS-LLM eval."""
         try:
             path = add_prefix_to_path(f'client_{self.ID}_',
-                                    self._cfg.federate.save_to)
+                                      self._cfg.federate.save_to)
             if self.ds_rank == 0:
                 self.trainer.save_model(path, self.state)
                 logger.info(f"[Client #{self.ID}] Saved final ckpt to {path}")
         except Exception as e:
-            logger.warning(f"[Client #{self.ID}] Failed saving final ckpt: {e}")
+            logger.warning(
+                f"[Client #{self.ID}] Failed saving final ckpt: {e}")
 
-    # ----------------------- NEW: helper to save client artifacts -----------------------
+    # Helper to save client artifacts at the end of training
     def _save_final_client_artifacts(self):
         """
-        Save this client's final local model artifacts at the end of the last round:
+        Save this client's final local model artifacts at the end of the last
+        round:
         - FS-LLM style checkpoint via trainer.save_model(...)
-        - PEFT/HF adapter directory via save_pretrained (if available), with a fallback.
+        - PEFT/HF adapter directory via save_pretrained (if available),
+          with a fallback.
 
         Output layout (derived from federate.save_to):
             ckpts/<base_name>/clients/client_<ID>/
@@ -222,19 +226,25 @@ class Client(BaseClient):
 
             save_to = self._cfg.federate.save_to
             base, _ = os.path.splitext(save_to)
-            client_root = os.path.join(base, f"clients", f"client_{self.ID}")
+            client_root = os.path.join(base, "clients", f"client_{self.ID}")
             os.makedirs(client_root, exist_ok=True)
 
-            # 1) Save an FS-LLM style checkpoint (works with existing eval scripts)
+            # 1) Save an FS-LLM style checkpoint
+            #    (works with existing eval scripts)
             ckpt_path = os.path.join(client_root, f"client_{self.ID}.ckpt")
             if hasattr(self.trainer, "save_model"):
-                # Pass current round state for completeness; many trainers ignore it in naming.
+                # Pass current round state for completeness; many trainers
+                # ignore it in naming.
                 self.trainer.save_model(ckpt_path, self.state)
-                logger.info(f"[Client #{self.ID}] Saved local FS-LLM ckpt to: {ckpt_path}")
+                logger.info(f"[Client #{self.ID}] Saved local FS-LLM ckpt to:"
+                            f" {ckpt_path}")
             else:
-                logger.warning(f"[Client #{self.ID}] trainer.save_model not available; skipping FS-LLM ckpt.")
+                logger.warning(
+                    f"[Client #{self.ID}] trainer.save_model not available; "
+                    "skipping FS-LLM ckpt.")
 
-            # 2) Save a PEFT adapter directory if possible (handy for HF-native eval)
+            # 2) Save a PEFT adapter directory if possible
+            #    (handy for HF-native eval)
             adapter_dir = os.path.join(client_root, "adapter")
             model_obj = None
             for cand in ["model", "_model"]:
@@ -251,28 +261,75 @@ class Client(BaseClient):
                     try:
                         model_obj.save_pretrained(adapter_dir)
                         saved_adapter = True
-                        logger.info(f"[Client #{self.ID}] Saved adapter via save_pretrained to: {adapter_dir}")
+                        logger.info(f"[Client #{self.ID}] Saved adapter via "
+                                    f"save_pretrained to: {adapter_dir}")
                     except Exception as e:
-                        logger.warning(f"[Client #{self.ID}] save_pretrained failed: {e}")
+                        logger.warning(
+                            f"[Client #{self.ID}] save_pretrained failed: {e}")
 
                 # Fallback: save PEFT adapter state dict
                 if not saved_adapter:
                     try:
-                        import torch  # local import to avoid unconditional dependency
+                        import torch  # local import to avoid extra deps
                         try:
                             from peft import get_peft_model_state_dict
                             state = get_peft_model_state_dict(model_obj)
                         except Exception:
                             # last resort: full state_dict (may be large)
                             state = model_obj.state_dict()
-                        torch.save(state, os.path.join(client_root, "adapter.safetensors"))
+                        torch.save(
+                            state,
+                            os.path.join(client_root, "adapter.safetensors"))
                         saved_adapter = True
-                        logger.info(f"[Client #{self.ID}] Saved adapter state_dict to: {client_root}/adapter.safetensors")
+                        logger.info(
+                            f"[Client #{self.ID}] Saved adapter state_dict to:"
+                            f" {client_root}/adapter.safetensors")
                     except Exception as e:
-                        logger.warning(f"[Client #{self.ID}] Failed to save adapter state: {e}")
+                        logger.warning(
+                            f"[Client #{self.ID}] Failed to save adapter "
+                            f"state: {e}")
         except Exception as e:
-            logger.warning(f"[Client #{self.ID}] Saving final local artifacts failed: {e}")
-    # ------------------------------------------------------------------------------------
+            logger.warning(
+                f"[Client #{self.ID}] Saving final local artifacts failed: "
+                f"{e}")
+
+    # End artifact helper block
+
+    def _log_client_metrics_to_wandb(self, metrics, sample_size):
+        """Send per-round client metrics to wandb when enabled."""
+        if not getattr(self._cfg, 'wandb', None) or not self._cfg.wandb.use:
+            return
+        try:
+            import wandb
+        except ImportError:
+            logger.warning(
+                "cfg.wandb.use=True but wandb is not installed; skip logging "
+                f"client #{self.ID} metrics to wandb.")
+            return
+
+        round_idx = self.state
+        base_tag = f'clients/client_{self.ID}'
+        payload = {f'{base_tag}/sample_size': sample_size}
+
+        for key, value in (metrics or {}).items():
+            scalar = None
+            if isinstance(value, Number):
+                scalar = float(value)
+            elif hasattr(value, 'item'):
+                try:
+                    scalar = float(value.item())
+                except (TypeError, ValueError):
+                    scalar = None
+            if scalar is None:
+                continue
+            payload[f'{base_tag}/{key}'] = scalar
+
+        if payload:
+            try:
+                wandb.log(payload, step=round_idx)
+            except Exception as exc:
+                logger.warning("Failed to log client #%s metrics to wandb: %s",
+                               self.ID, exc)
 
     def _gen_timestamp(self, init_timestamp, instance_number):
         if init_timestamp is None:
@@ -389,6 +446,13 @@ class Client(BaseClient):
             sender = message.sender
             timestamp = message.timestamp
             content = message.content
+            unlearn_meta = None
+            has_unlearn_payload = False
+            if isinstance(content, tuple) and len(content) == 2:
+                content, meta = content
+                if isinstance(meta, dict):
+                    has_unlearn_payload = True
+                    unlearn_meta = meta.get('_unlearn_bases')
 
             # dequantization
             if self._cfg.quantization.method == 'uniform':
@@ -410,6 +474,11 @@ class Client(BaseClient):
                     content[k] = v.to(self.device)
             self.trainer.update(content,
                                 strict=self._cfg.federate.share_local_model)
+            if hasattr(self.trainer, 'set_unlearn_bases'):
+                if has_unlearn_payload:
+                    self.trainer.set_unlearn_bases(unlearn_meta)
+                else:
+                    self.trainer.set_unlearn_bases({})
             self.state = round
             skip_train_isolated_or_global_mode = \
                 self.early_stopper.early_stopped and \
@@ -442,18 +511,22 @@ class Client(BaseClient):
                     role='Client #{}'.format(self.ID),
                     return_raw=True)
                 logger.info(train_log_res)
+                self._log_client_metrics_to_wandb(results, sample_size)
                 if self._cfg.wandb.use and self._cfg.wandb.client_train_info:
                     self._monitor.save_formatted_results(train_log_res,
                                                          save_file_name="")
 
-                # -------- NEW: save this client's final local artifacts in the last round --------
+                # Save this client's final local artifacts in the last round
                 try:
-                    # Rounds are typically 0..(total_round_num-1); save on the last index.
+                    # Rounds are typically 0..(total_round_num-1); save on
+                    # the last index.
                     if self.state == self._cfg.federate.total_round_num - 1:
                         self._save_final_client_artifacts()
                 except Exception as e:
-                    logger.warning(f"[Client #{self.ID}] Final artifact save skipped due to error: {e}")
-                # ---------------------------------------------------------------------------------
+                    logger.warning(
+                        f"[Client #{self.ID}] Final artifact save skipped due "
+                        f"to error: {e}")
+                # End last-round artifact save guard
 
             # Return the feedbacks to the server after local update
             if self._cfg.federate.use_ss:
@@ -463,13 +536,14 @@ class Client(BaseClient):
                     "cfg.federate.unseen_clients_rate in (0, 1)"
                 single_model_case = True
                 if isinstance(model_para_all, list):
-                    assert isinstance(model_para_all[0], dict), \
-                        "model_para should a list of " \
-                        "multiple state_dict for multiple models"
+                    assert isinstance(model_para_all[0], dict), (
+                        "model_para should be a list of state_dict for "
+                        "multiple models")
                     single_model_case = False
                 else:
-                    assert isinstance(model_para_all, dict), \
-                        "model_para should a state_dict for single model case"
+                    assert isinstance(model_para_all, dict), (
+                        "model_para should be a state_dict for single model "
+                        "case")
                     model_para_all = [model_para_all]
                 model_para_list_all = []
                 for model_para in model_para_all:

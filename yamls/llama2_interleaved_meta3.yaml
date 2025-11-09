@@ -4,14 +4,14 @@ seed: 42
 
 federate:
   mode: standalone
-  total_round_num: 338          # ≈0.75 epochs on chat client with 30 local steps
+  total_round_num: 50
   client_num: 3
   share_local_model: True
-  save_to: "ckpts/full/llama2_composite_meta3.ckpt"
+  save_to: "ckpts/llama2_interleaved_meta3.ckpt"
 
 data:
   root: data/
-  type: "composite_llm3.json@llm"
+  type: "interleaved_llm3.json@llm"
   splits: [0.90, 0.09, 0.01]
   splitter: "meta"
 
@@ -56,10 +56,3 @@ eval:
   freq: 100
   metrics: ["loss"]
   count_flops: False
-
-wandb:
-  use: True
-  name_user: "sbhansali8-georgia-institute-of-technology"
-  name_project: "FTL-Dev"
-  online_track: True
-  client_train_info: False

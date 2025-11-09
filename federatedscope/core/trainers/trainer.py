@@ -388,14 +388,27 @@ class Trainer(BaseTrainer):
         if filter_keywords is None:
             filter_keywords = self.cfg.personalization.local_param
 
-        trainable_filter = lambda p: True if \
-            self.cfg.personalization.share_non_trainable_para else \
-            lambda p: p in self.ctx.trainable_para_names
+        if self.cfg.personalization.share_non_trainable_para:
+            def trainable_filter(name, _):
+                return True
+            normalized_trainable = None
+        else:
+            trainable_names = set(self.ctx.trainable_para_names)
+            normalized_trainable = {
+                name.lstrip("model.") for name in trainable_names
+            }
+
+            def trainable_filter(name, _):
+                return name in trainable_names or (
+                    normalized_trainable is not None and
+                    name in normalized_trainable)
         keyword_filter = filter_by_specified_keywords
-        return dict(
-            filter(
-                lambda elem: trainable_filter(elem[1]) and keyword_filter(
-                    elem[0], filter_keywords), state_dict.items()))
+        filtered_items = (
+            (key, value) for key, value in state_dict.items()
+            if trainable_filter(key, value)
+            and keyword_filter(key, filter_keywords)
+        )
+        return dict(filtered_items)
 
     def save_model(self, path, cur_round=-1):
         raise NotImplementedError(

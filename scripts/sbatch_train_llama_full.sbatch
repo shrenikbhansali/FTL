@@ -12,6 +12,9 @@
 module load anaconda3
 conda activate fs-llm
 export HF_HOME=/home/hice1/sbhansali8/scratch
+export WANDB_API_KEY=78575c71e3200c01b61cae0272aef2d952ca18f9
+export WANDB_ENTITY=sbhansali8-georgia-institute-of-technology
+export WANDB_PROJECT=FTL-Dev
 cd /home/hice1/sbhansali8/scratch/FederatedScope
 
 python federatedscope/main.py --cfg yamls/full/llama2_composite_meta3_full.yaml

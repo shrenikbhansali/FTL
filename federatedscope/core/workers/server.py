@@ -479,6 +479,7 @@ class Server(BaseServer):
                 'client_feedback': msg_list,
                 'recover_fun': self.recover_fun,
                 'staleness': staleness,
+                'round': self.state,
             }
             # logger.info(f'The staleness is {staleness}')
             result = aggregator.aggregate(agg_info)
@@ -730,13 +731,26 @@ class Server(BaseServer):
         # We define the evaluation happens at the end of an epoch
         rnd = self.state - 1 if msg_type == 'evaluate' else self.state
 
+        extra_payload = None
+        if msg_type == 'model_para':
+            bases_collection = []
+            for aggregator in self.aggregators:
+                bases = getattr(aggregator, 'latest_bases', None)
+                bases_collection.append(bases if bases else {})
+            if any(bases_collection):
+                extra_payload = bases_collection if self.model_num > 1 \
+                    else bases_collection[0]
+
+        payload_to_send = (model_para, {'_unlearn_bases': extra_payload}) \
+            if extra_payload else model_para
+
         self.comm_manager.send(
             Message(msg_type=msg_type,
                     sender=self.ID,
                     receiver=receiver,
                     state=min(rnd, self.total_round_num),
                     timestamp=self.cur_timestamp,
-                    content=model_para))
+                    content=payload_to_send))
         if self._cfg.federate.online_aggr:
             for idx in range(self.model_num):
                 self.aggregators[idx].reset()

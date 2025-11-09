@@ -6,7 +6,7 @@
 #SBATCH --time=08:00:00
 #SBATCH --output=logs/%x_%A_%a.out
 #SBATCH --error=logs/%x_%A_%a.err
-#SBATCH --array=0-7
+#SBATCH --array=0-9
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=sbhansali8@gatech.edu
 
@@ -15,10 +15,12 @@ declare -a YAMLs=(
   "yamls/full/baselines/llama2_gsm8k_local_full.yaml"
   "yamls/full/baselines/llama2_instr_local_full.yaml"
   "yamls/full/baselines/llama2_all_in_one_full.yaml"
+  "yamls/full/baselines/llama2_interleaved_all_in_one_full.yaml"
   "yamls/full/baselines/qwen_moe_code_local_full.yaml"
   "yamls/full/baselines/qwen_moe_gsm8k_local_full.yaml"
   "yamls/full/baselines/qwen_moe_instr_local_full.yaml"
   "yamls/full/baselines/qwen_moe_all_in_one_full.yaml"
+  "yamls/full/baselines/qwen_moe_interleaved_all_in_one_full.yaml"
 )
 
 module load anaconda3

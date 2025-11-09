@@ -20,7 +20,8 @@ AGGREGATOR_TYPE = {
     "fedsageplus": "clients_avg",
     "gcflplus": "clients_avg",
     "fedgc": "clients_avg",
-    "fedopt": "fedopt"
+    "fedopt": "fedopt",
+    "unlearn_fedavg": "unlearn_fedavg",
 }
 
 CLIENTS_TYPE = {
@@ -33,7 +34,8 @@ CLIENTS_TYPE = {
     "fedsageplus": "fedsageplus",  # FedSage+ for graph data
     "gcflplus": "gcflplus",  # GCFL+ for graph data
     "fedgc": "fedgc",
-    "gradascent": "gradascent"
+    "gradascent": "gradascent",
+    "unlearn_fedavg": "normal",
 }
 
 SERVER_TYPE = {
@@ -44,5 +46,6 @@ SERVER_TYPE = {
     # models
     "fedsageplus": "fedsageplus",  # FedSage+ for graph data
     "gcflplus": "gcflplus",  # GCFL+ for graph data
-    "fedgc": "fedgc"
+    "fedgc": "fedgc",
+    "unlearn_fedavg": "normal",
 }

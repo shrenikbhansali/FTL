@@ -4,25 +4,22 @@ seed: 42
 
 federate:
   mode: standalone
-  total_round_num: 338          # ≈0.75 epochs on chat client with 30 local steps
-  client_num: 3
+  total_round_num: 1
+  client_num: 1
   share_local_model: True
-  save_to: "ckpts/full/llama2_composite_meta3.ckpt"
+  save_to: "ckpts/baselines/llama2_interleaved_all_in_one.ckpt"
 
 data:
   root: data/
-  type: "composite_llm3.json@llm"
-  splits: [0.90, 0.09, 0.01]
-  splitter: "meta"
+  type: "interleaved_llm3.json@llm"
+  splits: [0.98, 0.01, 0.01]
+  splitter: "iid"
 
 model:
   type: "meta-llama/Llama-2-7b-hf@huggingface_llm"
 
 llm:
   tok_len: 1024
-  chat:
-    max_len: 512
-    max_history_len: 0
   adapter:
     use: True
     args:
@@ -40,7 +37,7 @@ trainer:
   type: llmtrainer
 
 train:
-  local_update_steps: 30
+  local_update_steps: 300
   batch_or_epoch: batch
   is_enable_half: True
   optimizer:
@@ -53,13 +50,6 @@ dataloader:
   batch_size: 1
 
 eval:
-  freq: 100
+  freq: 1000
   metrics: ["loss"]
   count_flops: False
-
-wandb:
-  use: True
-  name_user: "sbhansali8-georgia-institute-of-technology"
-  name_project: "FTL-Dev"
-  online_track: True
-  client_train_info: False
