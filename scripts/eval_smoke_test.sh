@@ -34,6 +34,7 @@ done
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+SBATCH_DIR="$ROOT_DIR/scripts"
 
 if ! command -v sbatch >/dev/null 2>&1; then
   echo "sbatch not found in PATH. Run this script on a Slurm login node." >&2
@@ -71,7 +72,7 @@ run mkdir -p logs results
 if [[ $SKIP_GLOBAL -eq 0 ]]; then
   # Global sbatch index mapping: 0=mmlu,1=gsm8k,2=code llama2; 5=code qwen_moe
   log "Submitting global code evaluation tasks..."
-  submit_sbatch "eval-global-code" --array=2,5 sbatch_eval_global.sbatch
+  submit_sbatch "eval-global-code" --array=2,5 "$SBATCH_DIR/sbatch_eval_global.sbatch"
 else
   log "Skipping global evaluation submission."
 fi
@@ -79,7 +80,7 @@ fi
 if [[ $SKIP_CLIENTS -eq 0 ]]; then
   # Client sbatch indices with code task: every third entry (2,5,8,11,14,17)
   log "Submitting client code evaluation tasks..."
-  submit_sbatch "eval-clients-code" --array=2,5,8,11,14,17 sbatch_eval_clients.sbatch
+  submit_sbatch "eval-clients-code" --array=2,5,8,11,14,17 "$SBATCH_DIR/sbatch_eval_clients.sbatch"
 else
   log "Skipping client evaluation submission."
 fi
@@ -87,7 +88,7 @@ fi
 if [[ $SKIP_BASELINES -eq 0 ]]; then
   # Baseline sbatch indices with code task: 2,5,8,11,14,17,20,23
   log "Submitting baseline code evaluation tasks..."
-  submit_sbatch "eval-baselines-code" --array=2,5,8,11,14,17,20,23 sbatch_eval_baselines.sbatch
+  submit_sbatch "eval-baselines-code" --array=2,5,8,11,14,17,20,23 "$SBATCH_DIR/sbatch_eval_baselines.sbatch"
 else
   log "Skipping baseline evaluation submission."
 fi

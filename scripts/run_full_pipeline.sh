@@ -46,6 +46,7 @@ done
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+SBATCH_DIR="$ROOT_DIR/scripts"
 
 if ! command -v sbatch >/dev/null 2>&1; then
   echo "sbatch not found in PATH. Run this script on a Slurm login node." >&2
@@ -81,29 +82,29 @@ submit_sbatch() {
 run mkdir -p logs results_full
 
 log "Submitting full-scale training jobs..."
-LLAMA_JOB=$(submit_sbatch "train-llama-full" sbatch_train_llama_full.sbatch)
-QWEN_JOB=$(submit_sbatch "train-qwen-full" sbatch_train_qwen_moe_full.sbatch)
-BASE_JOB=$(submit_sbatch "train-baselines-full" sbatch_train_baselines_full.sbatch)
+LLAMA_JOB=$(submit_sbatch "train-llama-full" "$SBATCH_DIR/sbatch_train_llama_full.sbatch")
+QWEN_JOB=$(submit_sbatch "train-qwen-full" "$SBATCH_DIR/sbatch_train_qwen_moe_full.sbatch")
+BASE_JOB=$(submit_sbatch "train-baselines-full" "$SBATCH_DIR/sbatch_train_baselines_full.sbatch")
 
 if [[ $SKIP_GLOBAL_EVAL -eq 0 ]]; then
   log "Submitting global evaluations..."
-  submit_sbatch "eval-global-full-llama" --dependency=afterok:${LLAMA_JOB} --array=0-2 sbatch_eval_global_full.sbatch
-  submit_sbatch "eval-global-full-qwen" --dependency=afterok:${QWEN_JOB} --array=3-5 sbatch_eval_global_full.sbatch
+  submit_sbatch "eval-global-full-llama" --dependency=afterok:${LLAMA_JOB} --array=0-2 "$SBATCH_DIR/sbatch_eval_global_full.sbatch"
+  submit_sbatch "eval-global-full-qwen" --dependency=afterok:${QWEN_JOB} --array=3-5 "$SBATCH_DIR/sbatch_eval_global_full.sbatch"
 else
   log "Skipping global evaluations."
 fi
 
 if [[ $SKIP_CLIENT_EVAL -eq 0 ]]; then
   log "Submitting client evaluations..."
-  submit_sbatch "eval-clients-full-llama" --dependency=afterok:${LLAMA_JOB} --array=0-8 sbatch_eval_clients_full.sbatch
-  submit_sbatch "eval-clients-full-qwen" --dependency=afterok:${QWEN_JOB} --array=9-17 sbatch_eval_clients_full.sbatch
+  submit_sbatch "eval-clients-full-llama" --dependency=afterok:${LLAMA_JOB} --array=0-8 "$SBATCH_DIR/sbatch_eval_clients_full.sbatch"
+  submit_sbatch "eval-clients-full-qwen" --dependency=afterok:${QWEN_JOB} --array=9-17 "$SBATCH_DIR/sbatch_eval_clients_full.sbatch"
 else
   log "Skipping client evaluations."
 fi
 
 if [[ $SKIP_BASELINE_EVAL -eq 0 ]]; then
   log "Submitting baseline evaluations..."
-  submit_sbatch "eval-baselines-full" --dependency=afterok:${BASE_JOB} sbatch_eval_baselines_full.sbatch
+  submit_sbatch "eval-baselines-full" --dependency=afterok:${BASE_JOB} "$SBATCH_DIR/sbatch_eval_baselines_full.sbatch"
 else
   log "Skipping baseline evaluations."
 fi

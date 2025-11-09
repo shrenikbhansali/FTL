@@ -24,6 +24,7 @@ done
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+SBATCH_DIR="$ROOT_DIR/scripts"
 
 if ! command -v sbatch >/dev/null 2>&1; then
   echo "sbatch not found in PATH. Run this script on a Slurm login node." >&2
@@ -84,24 +85,24 @@ ensure_data_links
 run mkdir -p logs results
 
 log "Submitting smoke-test training jobs..."
-LLAMA_JOB=$(submit_sbatch "train-llama" sbatch_train_llama.sbatch)
-QWEN_JOB=$(submit_sbatch "train-qwen" sbatch_train_qwen_moe.sbatch)
+LLAMA_JOB=$(submit_sbatch "train-llama" "$SBATCH_DIR/sbatch_train_llama.sbatch")
+QWEN_JOB=$(submit_sbatch "train-qwen" "$SBATCH_DIR/sbatch_train_qwen_moe.sbatch")
 
 if [[ $SKIP_BASELINES -eq 0 ]]; then
-  BASELINE_JOB=$(submit_sbatch "train-baselines" sbatch_train_baselines.sbatch)
+  BASELINE_JOB=$(submit_sbatch "train-baselines" "$SBATCH_DIR/sbatch_train_baselines.sbatch")
 fi
 
 log "Submitting global evaluation arrays..."
-submit_sbatch "eval-global-llama" --dependency=afterok:${LLAMA_JOB} --array=0-2 sbatch_eval_global.sbatch
-submit_sbatch "eval-global-qwen" --dependency=afterok:${QWEN_JOB} --array=3-5 sbatch_eval_global.sbatch
+submit_sbatch "eval-global-llama" --dependency=afterok:${LLAMA_JOB} --array=0-2 "$SBATCH_DIR/sbatch_eval_global.sbatch"
+submit_sbatch "eval-global-qwen" --dependency=afterok:${QWEN_JOB} --array=3-5 "$SBATCH_DIR/sbatch_eval_global.sbatch"
 
 log "Submitting per-client evaluation arrays..."
-submit_sbatch "eval-clients-llama" --dependency=afterok:${LLAMA_JOB} --array=0-8 sbatch_eval_clients.sbatch
-submit_sbatch "eval-clients-qwen" --dependency=afterok:${QWEN_JOB} --array=9-17 sbatch_eval_clients.sbatch
+submit_sbatch "eval-clients-llama" --dependency=afterok:${LLAMA_JOB} --array=0-8 "$SBATCH_DIR/sbatch_eval_clients.sbatch"
+submit_sbatch "eval-clients-qwen" --dependency=afterok:${QWEN_JOB} --array=9-17 "$SBATCH_DIR/sbatch_eval_clients.sbatch"
 
 if [[ $SKIP_BASELINES -eq 0 ]]; then
   log "Submitting baseline evaluations..."
-  submit_sbatch "eval-baselines" --dependency=afterok:${BASELINE_JOB} sbatch_eval_baselines.sbatch
+  submit_sbatch "eval-baselines" --dependency=afterok:${BASELINE_JOB} "$SBATCH_DIR/sbatch_eval_baselines.sbatch"
 fi
 
 log "Smoke-test submissions complete."

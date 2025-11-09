@@ -492,14 +492,19 @@ class Monitor(object):
                                 new_results[f"{key}_min"] = all_res[0]
                                 new_results[f"{key}_max"] = all_res[-1]
                                 # bottom and top 10%
+                                bottom_count = max(1, all_res.size // 10)
                                 new_results[f"{key}_bottom10%"] = np.mean(
-                                    all_res[:all_res.size // 10])
+                                    all_res[:bottom_count])
                                 new_results[f"{key}_top10%"] = np.mean(
                                     all_res[all_res.size * 9 // 10:])
                                 # cosine similarity between the performance
                                 # distribution and 1
-                                new_results[f"{key}_cos1"] = np.mean(
-                                    all_res) / (np.sqrt(np.mean(all_res**2)))
+                                denom = np.sqrt(np.mean(all_res**2))
+                                if denom == 0:
+                                    new_results[f"{key}_cos1"] = 0.0
+                                else:
+                                    new_results[f"{key}_cos1"] = np.mean(
+                                        all_res) / denom
                                 # entropy of performance distribution
                                 all_res_preprocessed = all_res + 1e-9
                                 new_results[f"{key}_entropy"] = np.sum(
