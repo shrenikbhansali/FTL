@@ -1,8 +1,10 @@
+import json
 import os
-import torch
 import random
-import transformers
+
 import numpy as np
+import torch
+import transformers
 from tqdm import tqdm
 
 from federatedscope.core.configs.config import global_cfg
@@ -150,12 +152,20 @@ def main():
 
     labels, preds, cors = [], [], []
     category = None
+    overall_cors = []
+    category_cors = {}
     for sample in tqdm(list_data_dict):
-        if sample['category'] != category:
-            print(f"==============={category}===============\n"
-                  f"Num of total question: {len(cors)}\n"
-                  f"Average accuracy {np.mean(cors)}\n\n")
-            category = sample['category']
+        sample_category = sample['category']
+        if sample_category != category:
+            if cors:
+                print(f"==============={category}===============\n"
+                      f"Num of total question: {len(cors)}\n"
+                      f"Average accuracy {np.mean(cors)}\n\n")
+            else:
+                print(f"==============={category}===============\n"
+                      f"Num of total question: {len(cors)}\n"
+                      f"Average accuracy nan\n\n")
+            category = sample_category
             labels, preds, cors = [], [], []
 
         n_shot = N_SHOT
@@ -186,11 +196,40 @@ def main():
         labels.append(label)
         preds.append(pred)
         cors.append(cor)
+        overall_cors.append(cor)
+        category_cors.setdefault(sample_category, []).append(cor)
 
     # Print final
-    print(f"==============={category}===============\n"
-          f"Num of total question: {len(cors)}\n"
-          f"Average accuracy {np.mean(cors)}\n\n")
+    if cors:
+        print(f"==============={category}===============\n"
+              f"Num of total question: {len(cors)}\n"
+              f"Average accuracy {np.mean(cors)}\n\n")
+    else:
+        print(f"==============={category}===============\n"
+              f"Num of total question: 0\n"
+              f"Average accuracy nan\n\n")
+
+    if not overall_cors:
+        print("No code samples were processed.")
+        return
+
+    results = {
+        "categories": {
+            cat: float(np.mean(vals))
+            for cat, vals in category_cors.items()
+            if vals
+        },
+        "weighted_accuracy": float(np.mean(overall_cors))
+    }
+
+    eval_dir = "eval_result"
+    os.makedirs(eval_dir, exist_ok=True)
+    save_name = init_cfg.federate.save_to.replace("/", "_")
+    out_path = os.path.join(eval_dir,
+                            f"accuracies_{save_name}__code.json")
+    with open(out_path, "w") as f:
+        json.dump(results, f)
+    print(f"Code accuracy written to {out_path}")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=fsllm-train-qwenmoe
-#SBATCH --gres=gpu:H200:1
+#SBATCH --gres=gpu:H100:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-gpu=224G
 #SBATCH --time=08:00:00

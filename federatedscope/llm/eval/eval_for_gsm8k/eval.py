@@ -1,8 +1,10 @@
 # Ref: https://github.com/kojima-takeshi188/zero_shot_cot
 
-import re
+import json
 import os
 import random
+import re
+
 import transformers
 from tqdm import tqdm
 
@@ -208,6 +210,27 @@ def main():
         print(f'Num of total question: {len(answers)}, '
               f'correct num: {sum(answers)}, '
               f'correct rate: {float(sum(answers))/len(answers)}.')
+
+    if not answers:
+        print("No GSM8K samples were processed.")
+        return
+
+    weighted_acc = float(sum(answers) / len(answers))
+    results = {
+        "categories": {
+            "gsm8k": weighted_acc
+        },
+        "weighted_accuracy": weighted_acc
+    }
+
+    eval_dir = "eval_result"
+    os.makedirs(eval_dir, exist_ok=True)
+    save_name = init_cfg.federate.save_to.replace("/", "_")
+    out_path = os.path.join(eval_dir,
+                            f"accuracies_{save_name}__gsm8k.json")
+    with open(out_path, "w") as f:
+        json.dump(results, f)
+    print(f"GSM8K accuracy written to {out_path}")
 
 
 if __name__ == "__main__":
