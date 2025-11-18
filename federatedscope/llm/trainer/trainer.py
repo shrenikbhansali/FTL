@@ -34,6 +34,10 @@ class LLMTrainer(GeneralTorchTrainer):
                          monitor=monitor)
         self._unlearn_bases = {}
         self._warned_deepspeed_unlearn = False
+        self._unlearn_kind = 'union'
+        self._unlearn_round = 0
+        self._proj_strength = 1.0
+        self._unlearn_proj_dtype = 'float32'
 
     def _hook_on_fit_start_numerical_precision(self, ctx):
         if self.cfg.train.is_enable_half:
@@ -232,31 +236,45 @@ class LLMTrainer(GeneralTorchTrainer):
             ctx.batch_size
 
     def set_unlearn_bases(self, bases):
-        if bases is None:
+        if not bases:
             self._unlearn_bases = {}
+            self._unlearn_kind = 'union'
+            self._proj_strength = 0.0
             return
 
-        if isinstance(bases, list):
-            base_candidate = bases[0] if bases and isinstance(bases[0], dict) \
-                else {}
-        elif isinstance(bases, dict):
-            base_candidate = bases
-        else:
-            base_candidate = {}
+        q_dict, meta = self._parse_unlearn_payload(bases)
+        if not q_dict:
+            self._unlearn_bases = {}
+            self._unlearn_kind = 'union'
+            self._proj_strength = 0.0
+            return
 
         processed = {}
-        for name, tensor in base_candidate.items():
+        for name, tensor in q_dict.items():
             if not isinstance(tensor, torch.Tensor):
                 continue
             if tensor.ndim != 2:
                 continue
-            processed[name] = tensor.detach().clone()
+            processed[name] = tensor.detach().to(dtype=torch.float32).clone()
         self._unlearn_bases = processed
+        self._unlearn_kind = meta.get('kind', meta.get('broadcast', 'union'))
+        self._unlearn_proj_dtype = meta.get('proj_dtype',
+                                            self._unlearn_proj_dtype)
+        round_idx = meta.get('round')
+        if round_idx is not None:
+            try:
+                self._unlearn_round = int(round_idx)
+            except (TypeError, ValueError):
+                self._unlearn_round = 0
+        self._proj_strength = self._compute_proj_strength(self._unlearn_round)
 
     def _project_gradients(self, ctx):
         if not self.cfg.train.unlearn.project_grads:
             return
         if not self._unlearn_bases:
+            return
+        strength = getattr(self, '_proj_strength', 1.0)
+        if strength <= 0:
             return
         if ctx.cfg.llm.deepspeed.use:
             if not self._warned_deepspeed_unlearn:
@@ -266,6 +284,7 @@ class LLMTrainer(GeneralTorchTrainer):
             return
 
         device = ctx.device
+        proj_dtype = self._dtype_from_name(self._unlearn_proj_dtype)
         with torch.no_grad():
             for name, param in ctx.model.named_parameters():
                 if param.grad is None:
@@ -273,11 +292,55 @@ class LLMTrainer(GeneralTorchTrainer):
                 basis = self._unlearn_bases.get(name)
                 if basis is None or param.grad.ndim != 2:
                     continue
-                Q = basis.to(device=device, dtype=torch.float32)
-                grad_fp32 = param.grad.data.to(dtype=torch.float32)
-                projection = (grad_fp32 @ Q) @ Q.transpose(0, 1)
-                adjusted = grad_fp32 - projection
+                Q = basis.to(device=device, dtype=proj_dtype)
+                grad_fp = param.grad.data.to(dtype=proj_dtype)
+                projection = (grad_fp @ Q) @ Q.transpose(0, 1)
+                adjusted = grad_fp - strength * projection
                 param.grad.data = adjusted.to(dtype=param.grad.dtype)
+
+    def _parse_unlearn_payload(self, payload):
+        candidate = payload
+        if isinstance(candidate, list):
+            candidate = next(
+                (item for item in candidate if isinstance(item, dict)),
+                {})
+        if not isinstance(candidate, dict):
+            return {}, {}
+        if 'Q' in candidate and isinstance(candidate['Q'], dict):
+            meta = {k: v for k, v in candidate.items() if k != 'Q'}
+            q_dict = candidate['Q']
+        else:
+            meta = {}
+            q_dict = candidate
+        return q_dict, meta
+
+    def _compute_proj_strength(self, round_idx: int) -> float:
+        schedule = getattr(self.cfg.train.unlearn, 'proj_schedule', None)
+        if schedule is None:
+            return 1.0
+        mode = getattr(schedule, 'type', 'none')
+        if isinstance(mode, str) and mode.lower() == 'linear':
+            total_rounds = int(getattr(schedule, 'rounds', 0))
+            if total_rounds <= 0:
+                return 1.0
+            idx = max(0, int(round_idx))
+            return min(1.0, idx / float(total_rounds))
+        return 1.0
+
+    @staticmethod
+    def _dtype_from_name(name: str) -> torch.dtype:
+        mapping = {
+            'float32': torch.float32,
+            'fp32': torch.float32,
+            'float16': torch.float16,
+            'fp16': torch.float16,
+            'half': torch.float16,
+            'float64': torch.float64,
+            'fp64': torch.float64,
+            'double': torch.float64,
+            'bfloat16': torch.bfloat16,
+        }
+        return mapping.get(name.lower(), torch.float32)
 
 
 def call_llm_trainer(trainer_type):

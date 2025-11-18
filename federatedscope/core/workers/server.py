@@ -732,25 +732,71 @@ class Server(BaseServer):
         rnd = self.state - 1 if msg_type == 'evaluate' else self.state
 
         extra_payload = None
+        per_client_payload = {}
+        has_per_client = False
         if msg_type == 'model_para':
-            bases_collection = []
-            for aggregator in self.aggregators:
-                bases = getattr(aggregator, 'latest_bases', None)
-                bases_collection.append(bases if bases else {})
-            if any(bases_collection):
-                extra_payload = bases_collection if self.model_num > 1 \
-                    else bases_collection[0]
+            if self.model_num > 1:
+                extra_payload = [{} for _ in range(self.model_num)]
+            else:
+                extra_payload = {}
+            for idx, aggregator in enumerate(self.aggregators):
+                bases = getattr(aggregator, 'latest_bases', None) or {}
+                if self.model_num > 1:
+                    extra_payload[idx] = bases
+                else:
+                    extra_payload = bases
+                per_client = getattr(aggregator, 'latest_bases_per_client', {})
+                if per_client:
+                    has_per_client = True
+                    for client_id, meta in per_client.items():
+                        if self.model_num > 1:
+                            entry = per_client_payload.setdefault(
+                                client_id, [None] * self.model_num)
+                            entry[idx] = meta
+                        else:
+                            per_client_payload[client_id] = meta
 
-        payload_to_send = (model_para, {'_unlearn_bases': extra_payload}) \
-            if extra_payload else model_para
+        def _compose_payload_for_client(client_id):
+            if not has_per_client:
+                return extra_payload if extra_payload else None
+            if self.model_num > 1:
+                base = []
+                client_meta = per_client_payload.get(client_id)
+                for idx in range(self.model_num):
+                    specific = None
+                    if client_meta and idx < len(client_meta):
+                        specific = client_meta[idx]
+                    fallback = extra_payload[idx] if isinstance(
+                        extra_payload, list) and idx < len(extra_payload) else {}
+                    base.append(specific if specific is not None else fallback)
+                return base if any(base) else None
+            specific = per_client_payload.get(client_id)
+            if specific:
+                return specific
+            return extra_payload if extra_payload else None
 
-        self.comm_manager.send(
-            Message(msg_type=msg_type,
-                    sender=self.ID,
-                    receiver=receiver,
-                    state=min(rnd, self.total_round_num),
-                    timestamp=self.cur_timestamp,
-                    content=payload_to_send))
+        if msg_type == 'model_para' and has_per_client:
+            for client_id in receiver:
+                meta_payload = _compose_payload_for_client(client_id)
+                content = (model_para, {'_unlearn_bases': meta_payload}) \
+                    if meta_payload else model_para
+                self.comm_manager.send(
+                    Message(msg_type=msg_type,
+                            sender=self.ID,
+                            receiver=[client_id],
+                            state=min(rnd, self.total_round_num),
+                            timestamp=self.cur_timestamp,
+                            content=content))
+        else:
+            payload_to_send = (model_para, {'_unlearn_bases': extra_payload}) \
+                if extra_payload else model_para
+            self.comm_manager.send(
+                Message(msg_type=msg_type,
+                        sender=self.ID,
+                        receiver=receiver,
+                        state=min(rnd, self.total_round_num),
+                        timestamp=self.cur_timestamp,
+                        content=payload_to_send))
         if self._cfg.federate.online_aggr:
             for idx in range(self.model_num):
                 self.aggregators[idx].reset()

@@ -49,6 +49,9 @@ def extend_training_cfg(cfg):
     # ---------------------------------------------------------------------- #
     cfg.train.unlearn = CN()
     cfg.train.unlearn.project_grads = False
+    cfg.train.unlearn.proj_schedule = CN()
+    cfg.train.unlearn.proj_schedule.type = 'none'  # {'none', 'linear'}
+    cfg.train.unlearn.proj_schedule.rounds = 0
 
     # ---------------------------------------------------------------------- #
     # Finetune related options

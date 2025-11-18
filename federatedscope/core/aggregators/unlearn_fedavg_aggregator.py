@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import torch
 
@@ -24,11 +24,19 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
         self._device = torch.device(device) if not isinstance(
             device, torch.device) else device
         self._last_bases: Dict[str, torch.Tensor] = {}
+        self._last_bases_per_client: Dict[int, Dict[str, torch.Tensor]] = {}
+        self._ema_cache: Dict[int, Dict[str, torch.Tensor]] = {}
 
     @property
     def latest_bases(self) -> Dict[str, torch.Tensor]:
         """Return the latest Q bases to broadcast to clients."""
         return self._last_bases
+
+    @property
+    def latest_bases_per_client(self
+                                ) -> Dict[int, Dict[str, torch.Tensor]]:
+        """Return per-client bases payload when available."""
+        return self._last_bases_per_client
 
     def aggregate(self, agg_info: Dict) -> Dict[str, torch.Tensor]:
         if not self.cfg.aggregator.unlearn.enable:
@@ -71,14 +79,47 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
         lambda_shrink = self.cfg.aggregator.unlearn.lambda_shrink
         beta_shared = self.cfg.aggregator.unlearn.beta_shared
         alpha = self.cfg.aggregator.unlearn.alpha_global
+        broadcast_cfg = getattr(self.cfg.aggregator.unlearn, 'broadcast', None)
+        broadcast_kind = getattr(broadcast_cfg, 'kind', 'union').lower() \
+            if broadcast_cfg else 'union'
+        broadcast_ema_gamma = float(
+            getattr(broadcast_cfg, 'ema_gamma', 0.0)) if broadcast_cfg else 0.0
+        broadcast_pack_dtype = getattr(broadcast_cfg, 'pack_dtype',
+                                       proj_dtype) if broadcast_cfg else \
+            proj_dtype
+        broadcast_per_client = getattr(broadcast_cfg, 'per_client', True) \
+            if broadcast_cfg is not None else False
+        rank_cfg = getattr(self.cfg.aggregator.unlearn, 'rank', None)
+        energy_target = getattr(rank_cfg, 'energy_target', 1.0) \
+            if rank_cfg is not None else 1.0
+        max_rank = getattr(rank_cfg, 'max_rank', 0) \
+            if rank_cfg is not None else 0
+        if isinstance(energy_target, dict):
+            energy_default = float(
+                energy_target.get('default',
+                                  energy_target.get('__default__', 1.0)))
+        else:
+            energy_default = float(energy_target)
+        if isinstance(max_rank, dict):
+            max_rank_default = int(
+                max_rank.get('default', max_rank.get('__default__', 0)))
+        else:
+            max_rank_default = int(max_rank)
+        send_flag = getattr(self.cfg.aggregator.unlearn,
+                            'send_Q_to_clients', False)
+        round_idx = agg_info.get('round', 0)
+        staleness = agg_info.get('staleness', [])
+        client_ids = [client_id for client_id, _ in staleness]
+        if len(client_ids) != len(client_states):
+            client_ids = list(range(len(client_states)))
 
         relevant_deltas = {key: client_deltas[key] for key in target_keys}
-        unique_parts, shared_parts = self._discriminate(
-            relevant_deltas, chunk_rows, proj_dtype)
+        unique_parts, shared_parts, basis_map, stats_map = self._discriminate(
+            relevant_deltas, chunk_rows, proj_dtype, client_ids,
+            self._ema_cache, energy_target, max_rank, broadcast_ema_gamma)
+        self._update_ema_cache(client_ids, basis_map)
         updated_tensors = {}
         stats = []
-        bases_payload = {} if self.cfg.aggregator.unlearn.send_Q_to_clients \
-            else None
 
         for key in target_keys:
             base_tensor = cached_global.get(key)
@@ -99,22 +140,27 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                 dtype=global_state[key].dtype, device=global_state[key].device)
             updated_tensors[key] = updated_tensor
 
-            key_stats = self._collect_stats(key, uniques, shareds)
+            key_stats = self._collect_stats(key, uniques, shareds,
+                                            stats_map.get(key))
             stats.append(key_stats)
 
-            if bases_payload is not None:
-                proj_torch_dtype = self._resolve_proj_dtype(proj_dtype)
-                stacked = torch.cat(
-                    [delta.to(self._device) for delta in relevant_deltas[key]],
-                    dim=0).to(dtype=proj_torch_dtype)
-                basis = qr_basis_from_concat(stacked, proj_torch_dtype)
-                if basis is not None:
-                    bases_payload[key] = basis.cpu()
+        per_client_payload = {}
+        union_payload = {}
+        should_broadcast = send_flag or broadcast_kind in {'loo', 'union'}
+        if should_broadcast:
+            if broadcast_kind == 'loo' and broadcast_per_client:
+                per_client_payload = self._build_per_client_payload(
+                    basis_map, client_ids, proj_dtype, broadcast_pack_dtype,
+                    round_idx, broadcast_kind)
+            if not per_client_payload or broadcast_kind == 'union':
+                union_payload = self._build_union_payload(
+                    relevant_deltas, proj_dtype, broadcast_pack_dtype,
+                    round_idx,
+                    broadcast_kind if broadcast_kind == 'union' else 'union',
+                    energy_default, max_rank_default)
 
-        if bases_payload is not None:
-            self._last_bases = bases_payload
-        else:
-            self._last_bases = {}
+        self._last_bases_per_client = per_client_payload
+        self._last_bases = union_payload
 
         if stats:
             if getattr(self.cfg, 'wandb', None) and self.cfg.wandb.use:
@@ -132,6 +178,12 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                         log_payload[
                             f'{base_tag}/parallel_norm'] = parallel_norm
                         log_payload[f'{base_tag}/perp_parallel_ratio'] = ratio
+                        log_payload[f'{base_tag}/rank_mean'] = record[
+                            'rank_mean']
+                        log_payload[f'{base_tag}/rank_full_mean'] = record[
+                            'rank_full_mean']
+                        log_payload[
+                            f'{base_tag}/energy_mean'] = record['energy_mean']
                     if log_payload:
                         wandb.log(log_payload, step=round_idx)
                 except ImportError:
@@ -144,10 +196,12 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             for record in stats:
                 logger.info(
                     '[UNLEARN] key=%s ||perp||_F=%.4e ||parallel||_F='
-                    '%.4e mode=%s alpha=%.3f lambda=%.3f beta=%.3f '
-                    'chunk=%d dtype=%s device=%s', record['key'],
-                    record['perp_norm'], record['parallel_norm'], mode, alpha,
-                    lambda_shrink, beta_shared, chunk_rows, proj_dtype,
+                    '%.4e rank=%.1f/%.1f energy=%.3f mode=%s alpha=%.3f '
+                    'lambda=%.3f beta=%.3f chunk=%d dtype=%s device=%s',
+                    record['key'], record['perp_norm'],
+                    record['parallel_norm'], record['rank_mean'],
+                    record['rank_full_mean'], record['energy_mean'], mode,
+                    alpha, lambda_shrink, beta_shared, chunk_rows, proj_dtype,
                     self._device)
 
         maybe_clear_cuda(self._device)
@@ -255,8 +309,22 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
         deltas: Dict[str, List[torch.Tensor]],
         chunk_rows: int,
         proj_dtype: str,
-    ) -> Tuple[Dict[str, List[torch.Tensor]], Dict[str, List[torch.Tensor]]]:
-        return chunked_discrimination(deltas, chunk_rows, proj_dtype)
+        client_ids: List[int],
+        prev_bases: Dict[int, Dict[str, torch.Tensor]],
+        energy_target,
+        max_rank,
+        ema_gamma: float,
+    ) -> Tuple[Dict[str, List[torch.Tensor]], Dict[str, List[torch.Tensor]],
+               Dict[str, List[Optional[torch.Tensor]]],
+               Dict[str, List[Dict[str, float]]]]:
+        return chunked_discrimination(deltas,
+                                      chunk_rows,
+                                      proj_dtype,
+                                      client_ids=client_ids,
+                                      prev_bases=prev_bases,
+                                      energy_target=energy_target,
+                                      max_rank=max_rank,
+                                      ema_gamma=ema_gamma)
 
     def _combine_unique_shared(self, uniques: List[torch.Tensor],
                                shareds: List[torch.Tensor],
@@ -300,8 +368,102 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             acc = acc + tensor.to(device=self._device, dtype=dtype) * weight
         return acc
 
-    def _collect_stats(self, key: str, uniques: List[torch.Tensor],
-                       shareds: List[torch.Tensor]) -> Dict[str, float]:
+    def _update_ema_cache(self, client_ids: List[int],
+                          basis_map: Dict[str, List[Optional[torch.Tensor]]]):
+        if not client_ids:
+            return
+        for idx, client_id in enumerate(client_ids):
+            cache = self._ema_cache.setdefault(client_id, {})
+            for key, basis_list in basis_map.items():
+                if idx >= len(basis_list):
+                    continue
+                basis = basis_list[idx]
+                if basis is None:
+                    cache.pop(key, None)
+                else:
+                    cache[key] = basis.detach().to(device='cpu',
+                                                   dtype=torch.float32)
+
+    def _build_per_client_payload(
+        self,
+        basis_map: Dict[str, List[Optional[torch.Tensor]]],
+        client_ids: List[int],
+        proj_dtype: str,
+        pack_dtype: str,
+        round_idx: int,
+        kind: str,
+    ) -> Dict[int, Dict[str, object]]:
+        if not client_ids:
+            return {}
+        pack_torch_dtype = self._resolve_proj_dtype(pack_dtype)
+        payload: Dict[int, Dict[str, torch.Tensor]] = {}
+        for idx, client_id in enumerate(client_ids):
+            q_dict = {}
+            for key, basis_list in basis_map.items():
+                if idx >= len(basis_list):
+                    continue
+                basis = basis_list[idx]
+                if basis is None:
+                    continue
+                packed = self._pack_basis_tensor(basis, pack_torch_dtype)
+                q_dict[key] = packed
+            if q_dict:
+                payload[client_id] = {
+                    'kind': kind,
+                    'round': round_idx,
+                    'proj_dtype': proj_dtype,
+                    'pack_dtype': pack_dtype,
+                    'Q': q_dict
+                }
+        return payload
+
+    def _build_union_payload(
+        self,
+        deltas: Dict[str, List[torch.Tensor]],
+        proj_dtype: str,
+        pack_dtype: str,
+        round_idx: int,
+        kind: str,
+        energy_target,
+        max_rank,
+    ) -> Dict[str, object]:
+        proj_torch_dtype = self._resolve_proj_dtype(proj_dtype)
+        pack_torch_dtype = self._resolve_proj_dtype(pack_dtype)
+        q_dict = {}
+        for key, tensors in deltas.items():
+            if not tensors:
+                continue
+            stacked = torch.cat([
+                delta.to(self._device) for delta in tensors
+            ],
+                                 dim=0).to(dtype=proj_torch_dtype)
+            basis = qr_basis_from_concat(stacked,
+                                         proj_torch_dtype,
+                                         energy_target=energy_target,
+                                         max_rank=max_rank)
+            if basis is None:
+                continue
+            q_dict[key] = self._pack_basis_tensor(basis, pack_torch_dtype)
+        if not q_dict:
+            return {}
+        return {
+            'kind': kind,
+            'round': round_idx,
+            'proj_dtype': proj_dtype,
+            'pack_dtype': pack_dtype,
+            'Q': q_dict
+        }
+
+    def _pack_basis_tensor(self, tensor: torch.Tensor,
+                           dtype: torch.dtype) -> torch.Tensor:
+        return tensor.detach().to(device='cpu', dtype=dtype)
+
+    def _collect_stats(self,
+                       key: str,
+                       uniques: List[torch.Tensor],
+                       shareds: List[torch.Tensor],
+                       basis_stats: Optional[List[Dict[str, float]]] = None
+                       ) -> Dict[str, float]:
         unique_norms = [
             torch.linalg.norm(tensor.to(device='cpu', dtype=torch.float32))
             for tensor in uniques
@@ -310,10 +472,29 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             torch.linalg.norm(tensor.to(device='cpu', dtype=torch.float32))
             for tensor in shareds
         ]
+        if basis_stats:
+            ranks = torch.tensor([stat.get('rank', 0) for stat in basis_stats],
+                                 dtype=torch.float32)
+            rank_full = torch.tensor(
+                [stat.get('full_rank', 0) for stat in basis_stats],
+                dtype=torch.float32)
+            energies = torch.tensor(
+                [stat.get('energy', 0.0) for stat in basis_stats],
+                dtype=torch.float32)
+            rank_mean = ranks.mean().item()
+            rank_full_mean = rank_full.mean().item()
+            energy_mean = energies.mean().item()
+        else:
+            rank_mean = 0.0
+            rank_full_mean = 0.0
+            energy_mean = 0.0
         return {
             'key': key,
             'perp_norm': torch.stack(unique_norms).mean().item(),
-            'parallel_norm': torch.stack(shared_norms).mean().item()
+            'parallel_norm': torch.stack(shared_norms).mean().item(),
+            'rank_mean': rank_mean,
+            'rank_full_mean': rank_full_mean,
+            'energy_mean': energy_mean
         }
 
     @staticmethod
@@ -327,5 +508,6 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             'float16': torch.float16,
             'fp16': torch.float16,
             'half': torch.float16,
+            'bfloat16': torch.bfloat16,
         }
         return mapping.get(name.lower(), torch.float32)

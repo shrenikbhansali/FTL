@@ -36,8 +36,16 @@ def extend_aggregator_cfg(cfg):
         'q_proj', 'k_proj', 'v_proj', 'o_proj'
     ]
     cfg.aggregator.unlearn.proj_dtype = 'float32'
-    cfg.aggregator.unlearn.chunk_rows = 4096
+    cfg.aggregator.unlearn.chunk_rows = 0
     cfg.aggregator.unlearn.send_Q_to_clients = False
+    cfg.aggregator.unlearn.broadcast = CN()
+    cfg.aggregator.unlearn.broadcast.kind = 'loo'  # {'loo', 'union'}
+    cfg.aggregator.unlearn.broadcast.ema_gamma = 0.0
+    cfg.aggregator.unlearn.broadcast.pack_dtype = 'float16'
+    cfg.aggregator.unlearn.broadcast.per_client = True
+    cfg.aggregator.unlearn.rank = CN()
+    cfg.aggregator.unlearn.rank.energy_target = 0.9
+    cfg.aggregator.unlearn.rank.max_rank = 0  # 0 denotes unlimited
 
     # --------------- register corresponding check function ----------
     cfg.register_cfg_check_fun(assert_aggregator_cfg)
