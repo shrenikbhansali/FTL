@@ -274,6 +274,12 @@ class LLMTrainer(GeneralTorchTrainer):
         if not self._unlearn_bases:
             return
         strength = getattr(self, '_proj_strength', 1.0)
+        rho = getattr(self.cfg.train.unlearn, 'proj_rho', 1.0)
+        try:
+            rho_val = float(rho)
+        except (TypeError, ValueError):
+            rho_val = 1.0
+        strength = strength * rho_val
         if strength <= 0:
             return
         if ctx.cfg.llm.deepspeed.use:

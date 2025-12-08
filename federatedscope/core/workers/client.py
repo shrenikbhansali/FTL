@@ -476,7 +476,8 @@ class Client(BaseClient):
                                 strict=self._cfg.federate.share_local_model)
             if hasattr(self.trainer, 'set_unlearn_bases'):
                 if has_unlearn_payload:
-                    self.trainer.set_unlearn_bases(unlearn_meta)
+                    filtered_meta = self._filter_unlearn_meta(unlearn_meta)
+                    self.trainer.set_unlearn_bases(filtered_meta)
                 else:
                     self.trainer.set_unlearn_bases({})
             self.state = round
@@ -610,6 +611,27 @@ class Client(BaseClient):
                                 init_timestamp=timestamp,
                                 instance_number=sample_size),
                             content=(sample_size, shared_model_para)))
+
+    def _filter_unlearn_meta(self, payload):
+        if not payload:
+            return {}
+        use_per_client = getattr(self._cfg.train.unlearn,
+                                 'bank_use_per_client', False)
+
+        def _keep(entry):
+            if not isinstance(entry, dict):
+                return True
+            kind = entry.get('kind')
+            if kind == 'bank_per_client' and not use_per_client:
+                return False
+            return True
+
+        if isinstance(payload, list):
+            filtered = [entry for entry in payload if _keep(entry)]
+            return filtered if filtered else {}
+        if _keep(payload):
+            return payload
+        return {}
 
     def callback_funcs_for_assign_id(self, message: Message):
         """

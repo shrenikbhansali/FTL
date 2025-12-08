@@ -1,0 +1,91 @@
+use_gpu: True
+device: 0
+seed: 42
+
+federate:
+  mode: standalone
+  total_round_num: 338          # ≈0.75 epochs on chat client with 30 local steps
+  client_num: 3
+  share_local_model: True
+  save_to: "ckpts/full/llama2_composite_meta3_unlearn_bank.ckpt"
+
+data:
+  root: data/
+  type: "composite_llm3.json@llm"
+  splits: [0.90, 0.09, 0.01]
+  splitter: "meta"
+
+model:
+  type: "meta-llama/Llama-2-7b-hf@huggingface_llm"
+
+llm:
+  tok_len: 1024
+  chat:
+    max_len: 512
+    max_history_len: 0
+  adapter:
+    use: True
+    args:
+      - {
+          adapter_package: "peft",
+          adapter_method: "lora",
+          r: 8,
+          lora_alpha: 32,
+          lora_dropout: 0.05,
+          target_modules: ["q_proj","k_proj","v_proj","o_proj"],
+          modules_to_save: ["embed_tokens","lm_head"]
+        }
+
+aggregator:
+  type: "unlearn_fedavg"
+  unlearn:
+    enable: True
+    mode: "shrink"
+    lambda_shrink: 1.0
+    beta_shared: 0.2
+    alpha_global: 1.0
+    only_lora: True
+    target_modules: ["q_proj","k_proj","v_proj","o_proj"]
+    proj_dtype: "float32"
+    chunk_rows: 4096
+    send_Q_to_clients: False
+    bank:
+      enable: True
+      r_global: 4
+      r_client: 4
+      beta_global: 1.0
+      beta_resid: 0.0
+      energy_target: 0.0
+
+trainer:
+  type: llmtrainer
+
+train:
+  local_update_steps: 30
+  batch_or_epoch: batch
+  is_enable_half: False
+  unlearn:
+    project_grads: False
+  optimizer:
+    type: Adam
+    lr: 1.0e-4
+    betas: [0.9, 0.95]
+    eps: 1.0e-5
+
+dataloader:
+  batch_size: 1
+
+grad:
+  grad_clip: 1.0
+
+eval:
+  freq: 100
+  metrics: ["loss"]
+  count_flops: False
+
+wandb:
+  use: True
+  name_user: "sbhansali8-georgia-institute-of-technology"
+  name_project: "FTL-Dev"
+  online_track: True
+  client_train_info: False
