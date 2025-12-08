@@ -73,38 +73,10 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             self._last_bases = {}
             return base_result
 
-        chunk_rows = self.cfg.aggregator.unlearn.chunk_rows
-        proj_dtype = self.cfg.aggregator.unlearn.proj_dtype
-        mode = self.cfg.aggregator.unlearn.mode.lower()
-        lambda_shrink = self.cfg.aggregator.unlearn.lambda_shrink
-        beta_shared = self.cfg.aggregator.unlearn.beta_shared
-        alpha = self.cfg.aggregator.unlearn.alpha_global
-        broadcast_cfg = getattr(self.cfg.aggregator.unlearn, 'broadcast', None)
-        broadcast_kind = getattr(broadcast_cfg, 'kind', 'union').lower() \
-            if broadcast_cfg else 'union'
-        broadcast_ema_gamma = float(
-            getattr(broadcast_cfg, 'ema_gamma', 0.0)) if broadcast_cfg else 0.0
-        broadcast_pack_dtype = getattr(broadcast_cfg, 'pack_dtype',
-                                       proj_dtype) if broadcast_cfg else \
-            proj_dtype
-        broadcast_per_client = getattr(broadcast_cfg, 'per_client', True) \
-            if broadcast_cfg is not None else False
-        rank_cfg = getattr(self.cfg.aggregator.unlearn, 'rank', None)
-        energy_target = getattr(rank_cfg, 'energy_target', 1.0) \
-            if rank_cfg is not None else 1.0
-        max_rank = getattr(rank_cfg, 'max_rank', 0) \
-            if rank_cfg is not None else 0
-        if isinstance(energy_target, dict):
-            energy_default = float(
-                energy_target.get('default',
-                                  energy_target.get('__default__', 1.0)))
-        else:
-            energy_default = float(energy_target)
-        if isinstance(max_rank, dict):
-            max_rank_default = int(
-                max_rank.get('default', max_rank.get('__default__', 0)))
-        else:
-            max_rank_default = int(max_rank)
+        relevant_deltas = {key: client_deltas[key] for key in target_keys}
+        bank_cfg = getattr(self.cfg.aggregator.unlearn, 'bank', None)
+        bank_enabled = bool(getattr(bank_cfg, 'enable', False)) \
+            if bank_cfg is not None else False
         send_flag = getattr(self.cfg.aggregator.unlearn,
                             'send_Q_to_clients', False)
         round_idx = agg_info.get('round', 0)
@@ -113,96 +85,274 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
         if len(client_ids) != len(client_states):
             client_ids = list(range(len(client_states)))
 
-        relevant_deltas = {key: client_deltas[key] for key in target_keys}
-        unique_parts, shared_parts, basis_map, stats_map = self._discriminate(
-            relevant_deltas, chunk_rows, proj_dtype, client_ids,
-            self._ema_cache, energy_target, max_rank, broadcast_ema_gamma)
-        self._update_ema_cache(client_ids, basis_map)
-        updated_tensors = {}
-        stats = []
+        updated_tensors: Dict[str, torch.Tensor] = {}
 
-        for key in target_keys:
-            base_tensor = cached_global.get(key)
-            if base_tensor is None:
-                continue
+        if not bank_enabled:
+            chunk_rows = self.cfg.aggregator.unlearn.chunk_rows
+            proj_dtype = self.cfg.aggregator.unlearn.proj_dtype
+            mode = self.cfg.aggregator.unlearn.mode.lower()
+            lambda_shrink = self.cfg.aggregator.unlearn.lambda_shrink
+            beta_shared = self.cfg.aggregator.unlearn.beta_shared
+            alpha = self.cfg.aggregator.unlearn.alpha_global
+            broadcast_cfg = getattr(self.cfg.aggregator.unlearn, 'broadcast',
+                                    None)
+            broadcast_kind = getattr(broadcast_cfg, 'kind', 'union').lower() \
+                if broadcast_cfg else 'union'
+            broadcast_ema_gamma = float(
+                getattr(broadcast_cfg, 'ema_gamma', 0.0)) \
+                if broadcast_cfg else 0.0
+            broadcast_pack_dtype = getattr(broadcast_cfg, 'pack_dtype',
+                                           proj_dtype) \
+                if broadcast_cfg else proj_dtype
+            broadcast_per_client = getattr(broadcast_cfg, 'per_client', True) \
+                if broadcast_cfg is not None else False
+            rank_cfg = getattr(self.cfg.aggregator.unlearn, 'rank', None)
+            energy_target = getattr(rank_cfg, 'energy_target', 1.0) \
+                if rank_cfg is not None else 1.0
+            max_rank = getattr(rank_cfg, 'max_rank', 0) \
+                if rank_cfg is not None else 0
+            if isinstance(energy_target, dict):
+                energy_default = float(
+                    energy_target.get('default',
+                                      energy_target.get('__default__', 1.0)))
+            else:
+                energy_default = float(energy_target)
+            if isinstance(max_rank, dict):
+                max_rank_default = int(
+                    max_rank.get('default', max_rank.get('__default__', 0)))
+            else:
+                max_rank_default = int(max_rank)
+            unique_parts, shared_parts, basis_map, stats_map = \
+                self._discriminate(relevant_deltas, chunk_rows, proj_dtype,
+                                   client_ids, self._ema_cache, energy_target,
+                                   max_rank, broadcast_ema_gamma)
+            self._update_ema_cache(client_ids, basis_map)
+            stats = []
 
-            uniques = unique_parts[key]
-            shareds = shared_parts[key]
-            if len(uniques) == 0:
-                continue
+            for key in target_keys:
+                base_tensor = cached_global.get(key)
+                if base_tensor is None:
+                    continue
 
-            tilde = self._combine_unique_shared(uniques, shareds, weights,
-                                                mode, lambda_shrink,
-                                                beta_shared, proj_dtype)
-            aggregated_delta = self._weighted_sum(
-                tilde, weights, proj_dtype).to(dtype=base_tensor.dtype)
-            updated_tensor = (base_tensor + alpha * aggregated_delta).to(
-                dtype=global_state[key].dtype, device=global_state[key].device)
-            updated_tensors[key] = updated_tensor
+                uniques = unique_parts[key]
+                shareds = shared_parts[key]
+                if len(uniques) == 0:
+                    continue
 
-            key_stats = self._collect_stats(key, uniques, shareds,
-                                            stats_map.get(key))
-            stats.append(key_stats)
+                tilde = self._combine_unique_shared(uniques, shareds, weights,
+                                                    mode, lambda_shrink,
+                                                    beta_shared, proj_dtype)
+                aggregated_delta = self._weighted_sum(
+                    tilde, weights, proj_dtype).to(dtype=base_tensor.dtype)
+                updated_tensor = (base_tensor + alpha * aggregated_delta).to(
+                    dtype=global_state[key].dtype,
+                    device=global_state[key].device)
+                updated_tensors[key] = updated_tensor
 
-        per_client_payload = {}
-        union_payload = {}
-        should_broadcast = send_flag or broadcast_kind in {'loo', 'union'}
-        if should_broadcast:
-            if broadcast_kind == 'loo' and broadcast_per_client:
-                per_client_payload = self._build_per_client_payload(
-                    basis_map, client_ids, proj_dtype, broadcast_pack_dtype,
-                    round_idx, broadcast_kind)
-            if not per_client_payload or broadcast_kind == 'union':
-                union_payload = self._build_union_payload(
-                    relevant_deltas, proj_dtype, broadcast_pack_dtype,
-                    round_idx,
-                    broadcast_kind if broadcast_kind == 'union' else 'union',
-                    energy_default, max_rank_default)
+                key_stats = self._collect_stats(key, uniques, shareds,
+                                                stats_map.get(key))
+                stats.append(key_stats)
 
-        self._last_bases_per_client = per_client_payload
-        self._last_bases = union_payload
+            per_client_payload = {}
+            union_payload = {}
+            should_broadcast = send_flag or broadcast_kind in {'loo', 'union'}
+            if should_broadcast:
+                if broadcast_kind == 'loo' and broadcast_per_client:
+                    per_client_payload = self._build_per_client_payload(
+                        basis_map, client_ids, proj_dtype, broadcast_pack_dtype,
+                        round_idx, broadcast_kind)
+                if not per_client_payload or broadcast_kind == 'union':
+                    union_payload = self._build_union_payload(
+                        relevant_deltas, proj_dtype, broadcast_pack_dtype,
+                        round_idx,
+                        broadcast_kind if broadcast_kind == 'union' else
+                        'union', energy_default, max_rank_default)
 
-        if stats:
-            if getattr(self.cfg, 'wandb', None) and self.cfg.wandb.use:
-                try:
-                    import wandb
-                    round_idx = agg_info.get('round')
-                    log_payload = {}
-                    for record in stats:
-                        sanitized = record['key'].replace('.', '/')
-                        perp_norm = record['perp_norm']
-                        parallel_norm = record['parallel_norm']
-                        ratio = perp_norm / max(parallel_norm, 1e-12)
-                        base_tag = f'unlearn/{sanitized}'
-                        log_payload[f'{base_tag}/perp_norm'] = perp_norm
-                        log_payload[
-                            f'{base_tag}/parallel_norm'] = parallel_norm
-                        log_payload[f'{base_tag}/perp_parallel_ratio'] = ratio
-                        log_payload[f'{base_tag}/rank_mean'] = record[
-                            'rank_mean']
-                        log_payload[f'{base_tag}/rank_full_mean'] = record[
-                            'rank_full_mean']
-                        log_payload[
-                            f'{base_tag}/energy_mean'] = record['energy_mean']
-                    if log_payload:
-                        wandb.log(log_payload, step=round_idx)
-                except ImportError:
-                    logger.warning(
-                        "cfg.wandb.use=True but wandb is not installed; skip "
-                        "logging UNLEARN stats to wandb.")
-                except Exception as exc:
-                    logger.warning("Failed to log UNLEARN stats to wandb: %s",
-                                   exc)
-            for record in stats:
-                logger.info(
-                    '[UNLEARN] key=%s ||perp||_F=%.4e ||parallel||_F='
-                    '%.4e rank=%.1f/%.1f energy=%.3f mode=%s alpha=%.3f '
-                    'lambda=%.3f beta=%.3f chunk=%d dtype=%s device=%s',
-                    record['key'], record['perp_norm'],
-                    record['parallel_norm'], record['rank_mean'],
-                    record['rank_full_mean'], record['energy_mean'], mode,
-                    alpha, lambda_shrink, beta_shared, chunk_rows, proj_dtype,
-                    self._device)
+            self._last_bases_per_client = per_client_payload
+            self._last_bases = union_payload
+
+            if stats:
+                if getattr(self.cfg, 'wandb', None) and self.cfg.wandb.use:
+                    try:
+                        import wandb
+                        round_idx = agg_info.get('round')
+                        log_payload = {}
+                        for record in stats:
+                            sanitized = record['key'].replace('.', '/')
+                            perp_norm = record['perp_norm']
+                            parallel_norm = record['parallel_norm']
+                            ratio = perp_norm / max(parallel_norm, 1e-12)
+                            base_tag = f'unlearn/{sanitized}'
+                            log_payload[f'{base_tag}/perp_norm'] = perp_norm
+                            log_payload[
+                                f'{base_tag}/parallel_norm'] = parallel_norm
+                            log_payload[
+                                f'{base_tag}/perp_parallel_ratio'] = ratio
+                            log_payload[f'{base_tag}/rank_mean'] = record[
+                                'rank_mean']
+                            log_payload[f'{base_tag}/rank_full_mean'] = record[
+                                'rank_full_mean']
+                            log_payload[
+                                f'{base_tag}/energy_mean'] = record[
+                                    'energy_mean']
+                        if log_payload:
+                            wandb.log(log_payload, step=round_idx)
+                    except ImportError:
+                        logger.warning(
+                            "cfg.wandb.use=True but wandb is not installed; "
+                            "skip logging UNLEARN stats to wandb.")
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to log UNLEARN stats to wandb: %s", exc)
+                for record in stats:
+                    logger.info(
+                        '[UNLEARN] key=%s ||perp||_F=%.4e ||parallel||_F='
+                        '%.4e rank=%.1f/%.1f energy=%.3f mode=%s alpha=%.3f '
+                        'lambda=%.3f beta=%.3f chunk=%d dtype=%s device=%s',
+                        record['key'], record['perp_norm'],
+                        record['parallel_norm'], record['rank_mean'],
+                        record['rank_full_mean'], record['energy_mean'], mode,
+                        alpha, lambda_shrink, beta_shared, chunk_rows,
+                        proj_dtype, self._device)
+        else:
+            self._last_bases = {}
+            self._last_bases_per_client = {}
+            proj_dtype = self.cfg.aggregator.unlearn.proj_dtype
+            alpha = self.cfg.aggregator.unlearn.alpha_global
+            beta_global = float(getattr(bank_cfg, 'beta_global', 1.0))
+            beta_resid = float(getattr(bank_cfg, 'beta_resid', 0.0))
+            r_global_cfg = int(getattr(bank_cfg, 'r_global', 0))
+            r_client_cfg = int(getattr(bank_cfg, 'r_client', 0))
+            energy_target = float(getattr(bank_cfg, 'energy_target', 0.0))
+            bank_send_per_client = bool(
+                getattr(bank_cfg, 'bank_send_per_client', False))
+            bank_proj_mode = str(
+                getattr(bank_cfg, 'bank_proj_mode', 'others_private'))
+            include_shared = bank_proj_mode.lower() == 'others_plus_shared'
+            bank_proj_rank_max = int(
+                getattr(bank_cfg, 'bank_proj_rank_max', 0))
+            work_dtype = self._resolve_proj_dtype(proj_dtype)
+            bank_stats = []
+            shared_bases: Dict[str, torch.Tensor] = {}
+            private_bases: Dict[str, Dict[int, torch.Tensor]] = {}
+
+            with torch.no_grad():
+                for key in target_keys:
+                    base_tensor = cached_global.get(key)
+                    if base_tensor is None:
+                        continue
+                    deltas_for_key = relevant_deltas.get(key, [])
+                    if not deltas_for_key:
+                        continue
+                    deltas_fp = [
+                        delta.to(device=self._device, dtype=work_dtype)
+                        for delta in deltas_for_key
+                    ]
+                    stacked = torch.cat(deltas_fp, dim=0)
+                    S_k = self._build_global_basis_for_bank(
+                        stacked, r_global_cfg, energy_target, key)
+                    if S_k is not None:
+                        shared_bases[key] = S_k.detach()
+
+                    delta_sum = torch.zeros_like(deltas_fp[0],
+                                                 dtype=work_dtype,
+                                                 device=self._device)
+                    frac_records = []
+                    for idx, delta_fp in enumerate(deltas_fp):
+                        delta_fp = delta_fp.to(device=self._device,
+                                               dtype=work_dtype)
+                        d_glob, d_priv, d_res, priv_basis = \
+                            self._decompose_with_bank(delta_fp, S_k,
+                                                      r_client_cfg, key)
+                        tilde = d_priv + beta_global * d_glob + \
+                            beta_resid * d_res
+                        weight = weights[idx] if idx < len(weights) else 0.0
+                        delta_sum = delta_sum + weight * tilde
+
+                        norm_sq = torch.sum(delta_fp * delta_fp).item()
+                        denom = max(norm_sq, 1e-12)
+                        frac_records.append({
+                            'global':
+                            torch.sum(d_glob * d_glob).item() / denom,
+                            'private':
+                            torch.sum(d_priv * d_priv).item() / denom,
+                            'resid':
+                            torch.sum(d_res * d_res).item() / denom,
+                        })
+
+                        client_id = client_ids[idx] if idx < len(client_ids) \
+                            else idx
+                        if priv_basis is not None and priv_basis.numel() > 0:
+                            priv_dict = private_bases.setdefault(key, {})
+                            priv_dict[client_id] = priv_basis.detach()
+
+                    aggregated_delta = (alpha * delta_sum).to(
+                        dtype=base_tensor.dtype)
+                    updated_tensor = (base_tensor + aggregated_delta).to(
+                        dtype=global_state[key].dtype,
+                        device=global_state[key].device)
+                    updated_tensors[key] = updated_tensor
+
+                    if frac_records:
+                        global_mean = sum(item['global']
+                                          for item in frac_records) / \
+                            len(frac_records)
+                        private_mean = sum(item['private']
+                                           for item in frac_records) / \
+                            len(frac_records)
+                        resid_mean = sum(item['resid']
+                                         for item in frac_records) / \
+                            len(frac_records)
+                        bank_stats.append({
+                            'key': key,
+                            'global_fraction': global_mean,
+                            'private_fraction': private_mean,
+                            'resid_fraction': resid_mean
+                        })
+
+            if send_flag and bank_send_per_client and private_bases:
+                per_client_payload = self._build_bank_per_client_payload(
+                    private_bases, shared_bases, client_ids, proj_dtype,
+                    bank_proj_rank_max, include_shared, round_idx)
+            else:
+                per_client_payload = {}
+            self._last_bases_per_client = per_client_payload
+
+            if bank_stats:
+                if getattr(self.cfg, 'wandb', None) and self.cfg.wandb.use:
+                    try:
+                        import wandb
+                        round_idx = agg_info.get('round')
+                        log_payload = {}
+                        for record in bank_stats:
+                            sanitized = record['key'].replace('.', '/')
+                            base_tag = f'unlearn_bank/{sanitized}'
+                            log_payload[
+                                f'{base_tag}/global_fraction'] = record[
+                                    'global_fraction']
+                            log_payload[
+                                f'{base_tag}/private_fraction'] = record[
+                                    'private_fraction']
+                            log_payload[f'{base_tag}/resid_fraction'] = record[
+                                'resid_fraction']
+                        if log_payload:
+                            wandb.log(log_payload, step=round_idx)
+                    except ImportError:
+                        logger.warning(
+                            "cfg.wandb.use=True but wandb is not installed; "
+                            "skip logging bank stats to wandb.")
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to log bank stats to wandb: %s", exc)
+                for record in bank_stats:
+                    logger.info(
+                        '[UNLEARN][bank] key=%s global_frac=%.4f '
+                        'private_frac=%.4f resid_frac=%.4f '
+                        'alpha=%.3f beta_global=%.3f beta_resid=%.3f '
+                        'dtype=%s device=%s', record['key'],
+                        record['global_fraction'], record['private_fraction'],
+                        record['resid_fraction'], alpha, beta_global,
+                        beta_resid, proj_dtype, self._device)
 
         maybe_clear_cuda(self._device)
 
@@ -496,6 +646,170 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             'rank_full_mean': rank_full_mean,
             'energy_mean': energy_mean
         }
+
+    def _build_bank_per_client_payload(
+        self,
+        private_bases: Dict[str, Dict[int, torch.Tensor]],
+        shared_bases: Dict[str, torch.Tensor],
+        client_ids: List[int],
+        proj_dtype: str,
+        rank_max: int,
+        include_shared: bool,
+        round_idx: int,
+    ) -> Dict[int, Dict[str, object]]:
+        if not private_bases:
+            return {}
+        dtype = self._resolve_proj_dtype(proj_dtype)
+        unique_clients = list(dict.fromkeys(client_ids)) if client_ids else \
+            sorted({
+            cid
+            for basis_map in private_bases.values() for cid in basis_map
+        })
+        payload: Dict[int, Dict[str, object]] = {}
+        for client_id in unique_clients:
+            q_dict: Dict[str, torch.Tensor] = {}
+            for key, basis_map in private_bases.items():
+                others = []
+                for other_id, basis in basis_map.items():
+                    if other_id == client_id:
+                        continue
+                    others.append(basis.to(device=self._device,
+                                           dtype=dtype))
+                if include_shared:
+                    shared = shared_bases.get(key)
+                    if shared is not None:
+                        others.append(
+                            shared.to(device=self._device, dtype=dtype))
+                if not others:
+                    continue
+                concat = torch.cat(others, dim=1)
+                ortho = self._orthonormalize_basis(concat, rank_max, dtype)
+                if ortho is None or ortho.numel() == 0:
+                    continue
+                q_dict[key] = self._pack_basis_tensor(ortho, dtype)
+            if q_dict:
+                payload[client_id] = {
+                    'kind': 'bank_per_client',
+                    'round': round_idx,
+                    'proj_dtype': proj_dtype,
+                    'Q': q_dict
+                }
+        return payload
+
+    def _orthonormalize_basis(self,
+                              tensor: torch.Tensor,
+                              rank_max: int,
+                              proj_dtype: torch.dtype) -> Optional[torch.Tensor]:
+        if tensor is None or tensor.numel() == 0:
+            return None
+        matrix = tensor.to(device=self._device, dtype=proj_dtype)
+        try:
+            q, _ = torch.linalg.qr(matrix, mode='reduced')
+        except RuntimeError as exc:
+            logger.warning(
+                '[UNLEARN][bank] QR failed when building per-client bases: %s',
+                exc)
+            return None
+        if rank_max > 0:
+            cols = min(rank_max, q.shape[1])
+            q = q[:, :cols]
+        return q
+
+    def _build_global_basis_for_bank(self, stacked: torch.Tensor,
+                                     r_global_cfg: int,
+                                     energy_target: float,
+                                     key: str) -> Optional[torch.Tensor]:
+        if stacked.numel() == 0:
+            return None
+        try:
+            _, singular_vals, v_h = torch.linalg.svd(stacked,
+                                                     full_matrices=False)
+        except RuntimeError as exc:
+            logger.warning('[UNLEARN][bank] failed SVD for key %s: %s', key,
+                           exc)
+            return None
+        if v_h.numel() == 0:
+            return None
+        basis = v_h.transpose(-1, -2)
+        num_cols = basis.shape[1]
+        target_rank = max(r_global_cfg, 0)
+        if energy_target > 0.0 and singular_vals.numel() > 0:
+            sing_sq = singular_vals * singular_vals
+            total = torch.sum(sing_sq)
+            if total.item() > 0:
+                cumulative = torch.cumsum(sing_sq, dim=-1) / total
+                meet = (cumulative >= energy_target).nonzero(
+                    as_tuple=False)
+                if meet.numel() > 0:
+                    target_rank = int(meet[0].item()) + 1
+                else:
+                    target_rank = num_cols
+        target_rank = min(target_rank, num_cols)
+        if target_rank <= 0:
+            return None
+        return basis[:, :target_rank]
+
+    def _decompose_with_bank(self,
+                             delta: torch.Tensor,
+                             global_basis: Optional[torch.Tensor],
+                             r_client_cfg: int,
+                             key: str) -> Tuple[torch.Tensor, torch.Tensor,
+                                                torch.Tensor,
+                                                Optional[torch.Tensor]]:
+        if global_basis is not None:
+            d_glob = (delta @ global_basis) @ global_basis.transpose(-1, -2)
+        else:
+            d_glob = torch.zeros_like(delta)
+        residual = delta - d_glob
+        if r_client_cfg <= 0:
+            d_priv = torch.zeros_like(delta)
+            return d_glob, d_priv, residual, None
+        delta_norm = torch.linalg.norm(delta).item()
+        residual_norm = torch.linalg.norm(residual).item()
+        threshold = 1e-8 * max(delta_norm, 1e-12)
+        if residual_norm <= threshold:
+            d_priv = torch.zeros_like(delta)
+            return d_glob, d_priv, residual, None
+        try:
+            _, _, v_h = torch.linalg.svd(residual, full_matrices=False)
+        except RuntimeError as exc:
+            logger.warning(
+                '[UNLEARN][bank] failed private SVD for key %s: %s', key, exc)
+            d_priv = torch.zeros_like(delta)
+            return d_glob, d_priv, residual, None
+        if v_h.numel() == 0:
+            d_priv = torch.zeros_like(delta)
+            return d_glob, d_priv, residual, None
+        basis = v_h.transpose(-1, -2)
+        r_client = min(max(r_client_cfg, 0), basis.shape[1])
+        if r_client == 0:
+            d_priv = torch.zeros_like(delta)
+            return d_glob, d_priv, residual, None
+        priv_basis = basis[:, :r_client]
+        if global_basis is not None:
+            proj = global_basis @ (
+                global_basis.transpose(-1, -2) @ priv_basis)
+            priv_basis = priv_basis - proj
+            if priv_basis.numel() == 0:
+                priv_basis = None
+            else:
+                try:
+                    q, _ = torch.linalg.qr(priv_basis, mode='reduced')
+                except RuntimeError as exc:
+                    logger.warning(
+                        '[UNLEARN][bank] QR failed for key %s: %s', key, exc)
+                    q = None
+                if q is None or q.shape[1] == 0:
+                    priv_basis = None
+                else:
+                    cols = min(r_client, q.shape[1])
+                    priv_basis = q[:, :cols]
+        if priv_basis is None or priv_basis.shape[1] == 0:
+            d_priv = torch.zeros_like(delta)
+            return d_glob, d_priv, residual, None
+        d_priv = (residual @ priv_basis) @ priv_basis.transpose(-1, -2)
+        d_res = delta - d_glob - d_priv
+        return d_glob, d_priv, d_res, priv_basis
 
     @staticmethod
     def _resolve_proj_dtype(name: str) -> torch.dtype:

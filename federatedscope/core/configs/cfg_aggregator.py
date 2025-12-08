@@ -46,6 +46,17 @@ def extend_aggregator_cfg(cfg):
     cfg.aggregator.unlearn.rank = CN()
     cfg.aggregator.unlearn.rank.energy_target = 0.9
     cfg.aggregator.unlearn.rank.max_rank = 0  # 0 denotes unlimited
+    cfg.aggregator.unlearn.bank = CN()
+    cfg.aggregator.unlearn.bank.enable = False
+    cfg.aggregator.unlearn.bank.r_global = 4
+    cfg.aggregator.unlearn.bank.r_client = 4
+    cfg.aggregator.unlearn.bank.beta_global = 1.0
+    cfg.aggregator.unlearn.bank.beta_resid = 0.0
+    cfg.aggregator.unlearn.bank.energy_target = 0.0
+    cfg.aggregator.unlearn.bank.bank_send_per_client = False
+    cfg.aggregator.unlearn.bank.bank_proj_mode = \
+        'others_private'  # {'others_private', 'others_plus_shared'}
+    cfg.aggregator.unlearn.bank.bank_proj_rank_max = 0
 
     # --------------- register corresponding check function ----------
     cfg.register_cfg_check_fun(assert_aggregator_cfg)
