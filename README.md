@@ -1,6 +1,6 @@
 # FederatedScope-LLM with SubspaceBank via UNLEARN
 
-We extend FederatedScope-LLM (FS-LLM) with a **subspace bank** designed to keep multi-task LoRA fine-tuning stable. The bank augments UNLEARN-style aggregation (already present in upstream FS-LLM) by learning a shared subspace plus per-client private directions for every LoRA key, then feeding those directions back to the clients so they avoid stepping on each other. The rest of the system (datasets, trainers, evaluation scripts) remains compatible with standard FS-LLM.
+We extend FederatedScope-LLM (FS-LLM) with a **subspace bank** designed to keep multi-task LoRA fine-tuning stable. The bank augments UNLEARN-style aggregation (already present in upstream FS-LLM) by learning a shared subspace plus per-client private directions for every LoRA key, then feeding those directions back to the clients so they avoid stepping on each other.
 
 ---
 
