@@ -23,57 +23,62 @@ SubspaceBank introduces three components:
 2. **Structured aggregation of those components** (server side).
 3. **Client-side gradient projection using everyone else’s private bases** (trainer side).
 
-All operations target LoRA matrices (`q_proj`, `k_proj`, `v_proj`, `o_proj`, etc.). Let `D_{k,i} ∈ ℝ^{d_out×d_in}` be client `i`’s LoRA delta for key `k`.
+All operations target LoRA matrices (`q_proj`, `k_proj`, `v_proj`, `o_proj`, etc.). Let $D_{k,i} \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}$ be client $i$’s LoRA delta for key $k$.
 
-### Step 1 – Build a shared basis `S_k`
-1. Stack all client deltas vertically: `M_k = concat_i D_{k,i}`.
-2. Compute a thin SVD: `M_k = U_k Σ_k V_k^⊤`.
-3. Pick a rank `r_global` (fixed or by cumulative energy). Use the first `r_global` columns of `V_k` as `S_k` (orthonormal).
+### Step 1 – Build a shared basis $S_k$
+1. Stack all client deltas vertically: $M_k = \text{concat}_i D_{k,i}$.
+2. Compute a thin SVD: $M_k = U_k \Sigma_k V_k^\top$.
+3. Pick a rank $r_{\text{global}}$ (fixed or by cumulative energy). Use the first $r_{\text{global}}$ columns of $V_k$ as $S_k$ (orthonormal).
 
 This captures directions present across clients (similar to classic UNLEARN but per key).
 
-### Step 2 – Build private bases `P_{k,i}`
+### Step 2 – Build private bases $P_{k,i}$
 For each client:
-1. Remove the shared component: `R_{k,i}^{(0)} = D_{k,i} - (D_{k,i} S_k) S_k^⊤`.
-2. Compute a rank-`r_client` basis from `R_{k,i}^{(0)}` via SVD, then orthogonalize it against `S_k`. The result is `P_{k,i}`.
+1. Remove the shared component: $R_{k,i}^{(0)} = D_{k,i} - (D_{k,i} S_k) S_k^\top$.
+2. Compute a rank-$r_{\text{client}}$ basis from $R_{k,i}^{(0)}$ via SVD, then orthogonalize it against $S_k$. The result is $P_{k,i}$.
 
 These bases model client-specific skills (code-only patterns, GSM8K math heuristics, etc.) inside the orthogonal complement of the shared subspace.
 
 ### Step 3 – Decompose each delta
-\[
-D_{k,i}^{(\text{glob})} = (D_{k,i} S_k) S_k^⊤,\qquad
-D_{k,i}^{(\text{priv})} = (R_{k,i}^{(0)} P_{k,i}) P_{k,i}^⊤,\qquad
+$$
+D_{k,i}^{(\text{glob})} = (D_{k,i} S_k) S_k^\top,\qquad
+D_{k,i}^{(\text{priv})} = (R_{k,i}^{(0)} P_{k,i}) P_{k,i}^\top,\qquad
 R_{k,i} = D_{k,i} - D_{k,i}^{(\text{glob})} - D_{k,i}^{(\text{priv})}.
-\]
+$$
 
 ### Step 4 – Structured aggregation
-Instead of averaging raw deltas, we aggregate
-\[
-\tilde D_{k,i} = D_{k,i}^{(\text{priv})} + \beta_{\text{glob}} D_{k,i}^{(\text{glob})} + \beta_{\text{resid}} R_{k,i}.
-\]
-The server forms `ΔW_k = Σ_i w_i \tilde D_{k,i}` and updates `W_k` accordingly (with global learning rate `α_global`).
+Instead of averaging raw deltas, we aggregate:
 
-`β_{glob}` controls how much of the shared signal survives; `β_{resid}` lets you mix in orthogonal leftovers (usually 0).
+$$
+\tilde D_{k,i} = D_{k,i}^{(\text{priv})} + \beta_{\text{glob}} D_{k,i}^{(\text{glob})} + \beta_{\text{resid}} R_{k,i}.
+$$
+
+The server forms $\Delta W_k = \sum_i w_i \tilde D_{k,i}$ and updates $W_k$ accordingly (with global learning rate $\alpha_{\text{global}}$).
+
+$\beta_{\text{glob}}$ controls how much of the shared signal survives; $\beta_{\text{resid}}$ lets you mix in orthogonal leftovers (usually 0).
 
 ### Step 5 – Client-side gradient projection
-For each client `i`, the server concatenates every **other** client’s private bases (and, optionally, `S_k`) to build
-\[
-Q_k^{(i)} = \text{orth}\big([P_{k,j}]_{j ≠ i} \cup (\text{include } S_k?)\big).
-\]
-During local fine-tuning the trainer replaces every gradient `g_{k,i}` with
-\[
- g_{k,i} \leftarrow g_{k,i} (I - ρ Q_k^{(i)} Q_k^{(i)⊤}),
-\]
-which removes motion inside subspaces owned by other clients. `ρ = train.unlearn.proj_rho` scales the projection strength (default 1.0). This keeps client updates inside the span of the shared basis plus their own private basis, reducing interference.
+For each client $i$, the server concatenates every **other** client’s private bases (and, optionally, $S_k$) to build:
+
+$$
+Q_k^{(i)} = \text{orth}\big([P_{k,j}]_{j \neq i} \cup (\text{include } S_k?)\big).
+$$
+
+During local fine-tuning the trainer replaces every gradient $g_{k,i}$ with:
+
+$$
+g_{k,i} \leftarrow g_{k,i} (I - \rho Q_k^{(i)} Q_k^{(i)\top}),
+$$
+
+which removes motion inside subspaces owned by other clients. $\rho$ scales the projection strength (default 1.0). This keeps client updates inside the span of the shared basis plus their own private basis, reducing interference.
 
 ### Diagnostics
-For each key we log
-* `bank/global_fraction = ‖D_{k,i}^{(glob)}‖_F² / ‖D_{k,i}‖_F²`
+For each key we log:
+* `bank/global_fraction`
 * `bank/private_fraction`
 * `bank/resid_fraction`
 
 These tell you how much energy the current ranks capture.
-
 ---
 
 ## Configuration Guide
