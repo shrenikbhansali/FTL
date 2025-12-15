@@ -88,6 +88,12 @@ def extend_data_cfg(cfg):
     cfg.data.tulu3_federated.manifest = 'manifest.json'
     cfg.data.tulu3_federated.clients = []
 
+    # Configuration for prepared Tulu 3 federated splits
+    cfg.data.tulu3_federated = CN()
+    cfg.data.tulu3_federated.root = 'tulu3_federated'
+    cfg.data.tulu3_federated.manifest = 'manifest.json'
+    cfg.data.tulu3_federated.clients = []
+
     # feature engineering
     cfg.feat_engr = CN()
     cfg.feat_engr.type = ''
