@@ -6,3 +6,6 @@ __all__ = [
     basename(f)[:-3] for f in modules
     if isfile(f) and not f.endswith('__init__.py')
 ]
+
+# Ensure dataset-specific loaders register themselves.
+from federatedscope.llm.dataset import tulu3_federated  # noqa: F401,E402

@@ -84,7 +84,8 @@ def get_dataloader(dataset, config, split='train'):
             dataset = dataset[0].edge_index
     filtered_args = filter_dict(loader_cls.__init__, raw_args)
 
-    if config.data.type.lower().endswith('@llm'):
+    data_type = config.data.type.lower()
+    if data_type.endswith('@llm') or data_type == 'tulu3_federated':
         from federatedscope.llm.dataloader import get_tokenizer, \
             LLMDataCollator
         model_name, model_hub = config.model.type.split('@')

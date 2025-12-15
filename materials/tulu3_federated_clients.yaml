@@ -1,0 +1,15 @@
+clients:
+  - name: chat_client
+    families: [chat]
+  - name: qa_client
+    families: [qa]
+  - name: reasoning_client
+    families: [reasoning]
+  - name: math_client
+    families: [math]
+  - name: code_client
+    families: [code]
+  - name: safety_client
+    families: [safety]
+  - name: multilingual_client
+    families: [multi]

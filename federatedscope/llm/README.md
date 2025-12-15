@@ -194,6 +194,40 @@ In general, we use instruction SFT following [Alpaca](https://github.com/tatsu-l
 | `rosetta_alpaca@llm`  | [Link](https://github.com/sahil280114/codealpaca)     | `LDASplitter` or `MetaSplitter` split to 9 clients. |
 | `code_search_net@llm` | [Link](https://github.com/github/CodeSearchNet)       | `LDASplitter` or `MetaSplitter` split to 6 clients. |
 
+### Tulu 3 Federated SFT data
+
+We provide a helper script to partition the `allenai/tulu-3-sft-mixture` chat
+corpus into task-family-based federated clients:
+
+```bash
+python scripts/prepare_tulu3_federated.py \
+    --output-dir data/tulu3_federated \
+    --client-config path/to/tulu3_clients.yaml
+```
+
+The script downloads the mixture, annotates each source with a high-level task
+family (chat/code/math/qa/reasoning/safety/multi), filters rows per client, and
+writes `train.jsonl`/`val.jsonl` shards along with a `manifest.json`.
+
+To consume the prepared splits inside FS-LLM, set:
+
+```yaml
+data:
+  type: tulu3_federated
+  root: data
+  tulu3_federated:
+    root: tulu3_federated          # matches --output-dir
+    manifest: manifest.json
+    clients: ["chat_client", "math_client", "code_client"]
+federate:
+client_num: 3  # optional, will be inferred if omitted
+```
+
+Client names must exist in the manifest (the defaults are chat/math/code/qa/
+reasoning/safety/multilingual). Each client owns disjoint chat-style messages
+and the `tulu3_federated` loader tokenizes them with
+`tokenizer.apply_chat_template`, enabling direct supervised fine-tuning.
+
 #### Self-maintained Data
 
 | data.type                 | Note                                                         |
@@ -294,4 +328,3 @@ If you find FederatedScope-LLM useful for your research or development, please c
   year={2023}
 }
 ```
-
