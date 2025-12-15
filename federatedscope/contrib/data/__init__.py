@@ -6,3 +6,6 @@ __all__ = [
     basename(f)[:-3] for f in modules
     if isfile(f) and not f.endswith('__init__.py')
 ]
+
+for module_name in __all__:
+    __import__(f"{__name__}.{module_name}")

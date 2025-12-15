@@ -52,15 +52,25 @@ class ChatSFTDataset(Dataset):
         non-assistant tokens (borrowed from Open-Instruct's SFT pipeline).
         """
         # Primary tokenization of the full conversation.
-        input_ids = self.tokenizer.apply_chat_template(
-            conversation=messages,
-            tokenize=True,
-            return_tensors="pt",
-            padding=False,
-            truncation=True,
-            max_length=self.max_length,
-            add_generation_prompt=False,
-        )
+        if hasattr(self.tokenizer, "apply_chat_template"):
+            input_ids = self.tokenizer.apply_chat_template(
+                conversation=messages,
+                tokenize=True,
+                return_tensors="pt",
+                padding=False,
+                truncation=True,
+                max_length=self.max_length,
+                add_generation_prompt=False,
+            )
+        else:
+            joined = self._convert_messages_to_text(messages)
+            input_ids = self.tokenizer(
+                joined,
+                return_tensors="pt",
+                padding=False,
+                truncation=True,
+                max_length=self.max_length,
+            )["input_ids"]
         labels = input_ids.clone()
 
         for idx, message in enumerate(messages):
@@ -93,13 +103,58 @@ class ChatSFTDataset(Dataset):
         """
         if len(conversation_slice) == 0:
             return 0
-        tokens = self.tokenizer.apply_chat_template(
-            conversation=conversation_slice,
-            tokenize=True,
-            return_tensors="pt",
-            padding=False,
-            truncation=True,
-            max_length=self.max_length,
-            add_generation_prompt=add_generation_prompt,
-        )
-        return tokens.shape[1]
+        if hasattr(self.tokenizer, "apply_chat_template"):
+            tokens = self.tokenizer.apply_chat_template(
+                conversation=conversation_slice,
+                tokenize=True,
+                return_tensors="pt",
+                padding=False,
+                truncation=True,
+                max_length=self.max_length,
+                add_generation_prompt=add_generation_prompt,
+            )
+            return tokens.shape[1]
+        else:
+            joined = self._convert_messages_to_text(
+                conversation_slice,
+                add_generation_prompt=add_generation_prompt)
+            tokens = self.tokenizer(
+                joined,
+                return_tensors="pt",
+                padding=False,
+                truncation=True,
+                max_length=self.max_length,
+            )["input_ids"]
+            return tokens.shape[1]
+
+    def _convert_messages_to_text(self,
+                                  messages: List[Dict[str, str]],
+                                  add_generation_prompt: bool = False) -> str:
+        """
+        Fallback conversion for tokenizers without ``apply_chat_template``.
+
+        Mirrors Open-Instruct's ``convert_messages_to_text`` utility:
+        represent each turn as ``User: ...`` / ``Assistant: ...`` (see
+        scripts/data/filtering_and_updates/filter_special_tokens.py in
+        allenai/open-instruct).
+        """
+        text_parts = []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = message.get("role", "").lower()
+            content = message.get("content", "")
+            if not content:
+                continue
+            if role in ["system"]:
+                text_parts.append(f"System: {content}")
+            elif role in ["user", "human"]:
+                text_parts.append(f"User: {content}")
+            elif role in ["assistant", "ai"]:
+                text_parts.append(f"Assistant: {content}")
+            else:
+                text_parts.append(f"{role.capitalize()}: {content}")
+
+        if add_generation_prompt:
+            text_parts.append("Assistant:")
+        return "\n\n".join(text_parts)
