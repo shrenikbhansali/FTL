@@ -75,7 +75,7 @@ trainer:
 train:
   local_update_steps: 30
   batch_or_epoch: batch
-  is_enable_half: False
+  is_enable_half: True
   unlearn:
     project_grads: True
     proj_rho: 1.0
