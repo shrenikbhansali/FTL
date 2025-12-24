@@ -123,20 +123,20 @@ QWEN_UNLEARN_JOB=$(submit_sbatch "train-qwen-unlearn-full" "$QWEN_UNLEARN_SBATCH
 
 if [[ $SKIP_GLOBAL_EVAL -eq 0 ]]; then
   log "Submitting global evaluations..."
-  submit_sbatch "eval-global-llama" --dependency=afterok:${LLAMA_JOB} --array=0-2 "$EVAL_GLOBAL_SBATCH"
-  submit_sbatch "eval-global-qwen" --dependency=afterok:${QWEN_JOB} --array=3-5 "$EVAL_GLOBAL_SBATCH"
-  submit_sbatch "eval-global-unlearn-llama" --dependency=afterok:${LLAMA_UNLEARN_JOB} --array=0-5 "$EVAL_UNLEARN_GLOBAL_SBATCH"
-  submit_sbatch "eval-global-unlearn-qwen" --dependency=afterok:${QWEN_UNLEARN_JOB} --array=6-11 "$EVAL_UNLEARN_GLOBAL_SBATCH"
+  submit_sbatch "eval-global-llama" --dependency=afterok:${LLAMA_JOB} --array=0-3 "$EVAL_GLOBAL_SBATCH"
+  submit_sbatch "eval-global-qwen" --dependency=afterok:${QWEN_JOB} --array=4-7 "$EVAL_GLOBAL_SBATCH"
+  submit_sbatch "eval-global-unlearn-llama" --dependency=afterok:${LLAMA_UNLEARN_JOB} --array=0-7 "$EVAL_UNLEARN_GLOBAL_SBATCH"
+  submit_sbatch "eval-global-unlearn-qwen" --dependency=afterok:${QWEN_UNLEARN_JOB} --array=8-15 "$EVAL_UNLEARN_GLOBAL_SBATCH"
 else
   log "Skipping global evaluations."
 fi
 
 if [[ $SKIP_CLIENT_EVAL -eq 0 ]]; then
   log "Submitting client evaluations..."
-  submit_sbatch "eval-clients-llama" --dependency=afterok:${LLAMA_JOB} --array=0-8 "$EVAL_CLIENT_SBATCH"
-  submit_sbatch "eval-clients-qwen" --dependency=afterok:${QWEN_JOB} --array=9-17 "$EVAL_CLIENT_SBATCH"
-  submit_sbatch "eval-clients-unlearn-llama" --dependency=afterok:${LLAMA_UNLEARN_JOB} --array=0-17 "$EVAL_UNLEARN_CLIENT_SBATCH"
-  submit_sbatch "eval-clients-unlearn-qwen" --dependency=afterok:${QWEN_UNLEARN_JOB} --array=18-35 "$EVAL_UNLEARN_CLIENT_SBATCH"
+  submit_sbatch "eval-clients-llama" --dependency=afterok:${LLAMA_JOB} --array=0-11 "$EVAL_CLIENT_SBATCH"
+  submit_sbatch "eval-clients-qwen" --dependency=afterok:${QWEN_JOB} --array=12-23 "$EVAL_CLIENT_SBATCH"
+  submit_sbatch "eval-clients-unlearn-llama" --dependency=afterok:${LLAMA_UNLEARN_JOB} --array=0-23 "$EVAL_UNLEARN_CLIENT_SBATCH"
+  submit_sbatch "eval-clients-unlearn-qwen" --dependency=afterok:${QWEN_UNLEARN_JOB} --array=24-47 "$EVAL_UNLEARN_CLIENT_SBATCH"
 else
   log "Skipping client evaluations."
 fi

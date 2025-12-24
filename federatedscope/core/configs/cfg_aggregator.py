@@ -38,6 +38,7 @@ def extend_aggregator_cfg(cfg):
     cfg.aggregator.unlearn.proj_dtype = 'float32'
     cfg.aggregator.unlearn.chunk_rows = 0
     cfg.aggregator.unlearn.send_Q_to_clients = False
+    cfg.aggregator.unlearn.log_stats = True
     cfg.aggregator.unlearn.broadcast = CN()
     cfg.aggregator.unlearn.broadcast.kind = 'loo'  # {'loo', 'union'}
     cfg.aggregator.unlearn.broadcast.ema_gamma = 0.0

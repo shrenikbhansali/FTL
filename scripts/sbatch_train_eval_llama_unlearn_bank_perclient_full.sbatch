@@ -24,21 +24,21 @@ ROOT=$(pwd)
 CKPT="ckpts/full/llama2_composite_meta3_unlearn_bank_perclient.ckpt"
 HF_TYPE='meta-llama/Llama-2-7b-hf@huggingface_llm'
 FP16=False
-TASKS=("mmlu" "gsm8k" "code")
+TASKS=("mmlu" "gsm8k" "ifeval" "humaneval")
 
 for TASK in "${TASKS[@]}"; do
   RES_DIR="$ROOT/results_full/global/llama2_unlearn_bank_perclient/${TASK}/$SLURM_JOB_ID"
   mkdir -p "$RES_DIR"
 
-  if [[ "$TASK" == "code" ]]; then
-    CSN_FILE="$ROOT/data/csn_test.jsonl"
-    LOCK_FILE="$ROOT/data/.csn.lock"
-    if [[ ! -f "$CSN_FILE" ]]; then
+  if [[ "$TASK" == "ifeval" ]]; then
+    IFEVAL_FILE="$ROOT/data/ifeval_input_data.jsonl"
+    LOCK_FILE="$ROOT/data/.ifeval.lock"
+    if [[ ! -f "$IFEVAL_FILE" ]]; then
       mkdir -p "$ROOT/data"
       (
         flock 200
-        if [[ ! -f "$CSN_FILE" ]]; then
-          python federatedscope/llm/dataset/code_search_net.py
+        if [[ ! -f "$IFEVAL_FILE" ]]; then
+          python federatedscope/llm/dataset/ifeval.py
         fi
       ) 200>"$LOCK_FILE"
     fi
@@ -72,7 +72,9 @@ EOF2
     python federatedscope/llm/eval/eval_for_mmlu/eval.py --cfg "$EVAL_YAML"
   elif [[ "$TASK" == "gsm8k" ]]; then
     python federatedscope/llm/eval/eval_for_gsm8k/eval.py --cfg "$EVAL_YAML"
+  elif [[ "$TASK" == "ifeval" ]]; then
+    python federatedscope/llm/eval/eval_for_ifeval/eval.py --cfg "$EVAL_YAML"
   else
-    python federatedscope/llm/eval/eval_for_code/eval.py --cfg "$EVAL_YAML"
+    python federatedscope/llm/eval/eval_for_humaneval/eval.py --cfg "$EVAL_YAML"
   fi
 done

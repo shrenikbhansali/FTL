@@ -6,40 +6,28 @@
 #SBATCH --time=08:00:00
 #SBATCH --output=logs/%x_%A_%a.out
 #SBATCH --error=logs/%x_%A_%a.err
-#SBATCH --array=0-35
+#SBATCH --array=0-47
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=sbhansali8@gatech.edu
 
-declare -a MODELS=(
-  "llama2" "llama2" "llama2"  "llama2" "llama2" "llama2"  "llama2" "llama2" "llama2"
-  "llama2" "llama2" "llama2"  "llama2" "llama2" "llama2"  "llama2" "llama2" "llama2"
-  "qwen15moe" "qwen15moe" "qwen15moe"  "qwen15moe" "qwen15moe" "qwen15moe"  "qwen15moe" "qwen15moe" "qwen15moe"
-  "qwen15moe" "qwen15moe" "qwen15moe"  "qwen15moe" "qwen15moe" "qwen15moe"  "qwen15moe" "qwen15moe" "qwen15moe"
-)
-declare -a TAGS=(
-  "unlearn" "unlearn" "unlearn"  "unlearn" "unlearn" "unlearn"  "unlearn" "unlearn" "unlearn"
-  "unlearn_shrink05" "unlearn_shrink05" "unlearn_shrink05"  "unlearn_shrink05" "unlearn_shrink05" "unlearn_shrink05"  "unlearn_shrink05" "unlearn_shrink05" "unlearn_shrink05"
-  "unlearn" "unlearn" "unlearn"  "unlearn" "unlearn" "unlearn"  "unlearn" "unlearn" "unlearn"
-  "unlearn_shrink05" "unlearn_shrink05" "unlearn_shrink05"  "unlearn_shrink05" "unlearn_shrink05" "unlearn_shrink05"  "unlearn_shrink05" "unlearn_shrink05" "unlearn_shrink05"
-)
-declare -a CLIENTS=(
-  1 1 1  2 2 2  3 3 3
-  1 1 1  2 2 2  3 3 3
-  1 1 1  2 2 2  3 3 3
-  1 1 1  2 2 2  3 3 3
-)
-declare -a TASKS=(
-  "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"
-  "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"
-  "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"
-  "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"  "mmlu" "gsm8k" "code"
-)
+TASKS=("mmlu" "gsm8k" "ifeval" "humaneval")
+CLIENTS=(1 2 3)
+COMBO_MODELS=("llama2" "llama2" "qwen15moe" "qwen15moe")
+COMBO_TAGS=("unlearn" "unlearn_shrink05" "unlearn" "unlearn_shrink05")
 
-IDX=$SLURM_ARRAY_TASK_ID
-MODEL=${MODELS[$IDX]}
-TAG=${TAGS[$IDX]}
-CID=${CLIENTS[$IDX]}
-TASK=${TASKS[$IDX]}
+TASKS_PER_CLIENT=${#TASKS[@]}
+CLIENTS_PER_COMBO=${#CLIENTS[@]}
+PER_COMBO=$((TASKS_PER_CLIENT * CLIENTS_PER_COMBO))
+
+COMBO_IDX=$((SLURM_ARRAY_TASK_ID / PER_COMBO))
+WITHIN_COMBO=$((SLURM_ARRAY_TASK_ID % PER_COMBO))
+CLIENT_IDX=$((WITHIN_COMBO / TASKS_PER_CLIENT))
+TASK_IDX=$((WITHIN_COMBO % TASKS_PER_CLIENT))
+
+MODEL=${COMBO_MODELS[$COMBO_IDX]}
+TAG=${COMBO_TAGS[$COMBO_IDX]}
+CID=${CLIENTS[$CLIENT_IDX]}
+TASK=${TASKS[$TASK_IDX]}
 
 if [[ "$MODEL" == "llama2" ]]; then
   BASE_PATH="ckpts/full/llama2_composite_meta3_${TAG}"
@@ -61,15 +49,15 @@ ROOT=$(pwd)
 RES_DIR=$ROOT/results_full/clients/${MODEL}_${TAG}/client_${CID}/${TASK}/$SLURM_JOB_ID
 mkdir -p "$RES_DIR"
 
-if [[ "$TASK" == "code" ]]; then
-  CSN_FILE="$ROOT/data/csn_test.jsonl"
-  LOCK_FILE="$ROOT/data/.csn.lock"
-  if [[ ! -f "$CSN_FILE" ]]; then
+if [[ "$TASK" == "ifeval" ]]; then
+  IFEVAL_FILE="$ROOT/data/ifeval_input_data.jsonl"
+  LOCK_FILE="$ROOT/data/.ifeval.lock"
+  if [[ ! -f "$IFEVAL_FILE" ]]; then
     mkdir -p "$ROOT/data"
     (
       flock 200
-      if [[ ! -f "$CSN_FILE" ]]; then
-        python federatedscope/llm/dataset/code_search_net.py
+      if [[ ! -f "$IFEVAL_FILE" ]]; then
+        python federatedscope/llm/dataset/ifeval.py
       fi
     ) 200>"$LOCK_FILE"
   fi
@@ -103,6 +91,8 @@ if [[ "$TASK" == "mmlu" ]]; then
   python federatedscope/llm/eval/eval_for_mmlu/eval.py --cfg "$EVAL_YAML"
 elif [[ "$TASK" == "gsm8k" ]]; then
   python federatedscope/llm/eval/eval_for_gsm8k/eval.py --cfg "$EVAL_YAML"
+elif [[ "$TASK" == "ifeval" ]]; then
+  python federatedscope/llm/eval/eval_for_ifeval/eval.py --cfg "$EVAL_YAML"
 else
-  python federatedscope/llm/eval/eval_for_code/eval.py --cfg "$EVAL_YAML"
+  python federatedscope/llm/eval/eval_for_humaneval/eval.py --cfg "$EVAL_YAML"
 fi

@@ -93,6 +93,11 @@ def get_tokenizer(model_name, cache_dir, tok_len=128, pkg='huggingface_llm'):
         padding_side="right",
         use_fast=False,
     )
+    # Llama chat templates append the assistant turn at the end; keep it after
+    # truncation so labels aren't all -100 for long prompts.
+    model_name_lower = model_name.lower() if isinstance(model_name, str) else ''
+    if 'llama' in model_name_lower:
+        tokenizer.truncation_side = "left"
 
     special_tokens = dict()
     if tokenizer.pad_token is None:

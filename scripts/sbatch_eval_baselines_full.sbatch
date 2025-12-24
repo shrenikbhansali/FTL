@@ -6,16 +6,16 @@
 #SBATCH --time=08:00:00
 #SBATCH --output=logs/%x_%A_%a.out
 #SBATCH --error=logs/%x_%A_%a.err
-#SBATCH --array=0-29
+#SBATCH --array=0-39
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=sbhansali8@gatech.edu
 
 MODELS=(llama2 llama2 llama2 llama2 llama2 qwen_moe qwen_moe qwen_moe qwen_moe qwen_moe)
 VARIANTS=(code_local gsm8k_local instr_local all_in_one interleaved_all_in_one code_local gsm8k_local instr_local all_in_one interleaved_all_in_one)
-TASKS=(mmlu gsm8k code)
+TASKS=(mmlu gsm8k ifeval humaneval)
 
-mid=$(( SLURM_ARRAY_TASK_ID / 3 ))
-tid=$(( SLURM_ARRAY_TASK_ID % 3 ))
+mid=$(( SLURM_ARRAY_TASK_ID / 4 ))
+tid=$(( SLURM_ARRAY_TASK_ID % 4 ))
 MODEL=${MODELS[$mid]}
 VAR=${VARIANTS[$mid]}
 TASK=${TASKS[$tid]}
@@ -29,15 +29,15 @@ ROOT=$(pwd)
 RES_DIR=$ROOT/results_full/baselines/$MODEL/$VAR/$TASK/$SLURM_JOB_ID
 mkdir -p "$RES_DIR"
 
-if [[ "$TASK" == "code" ]]; then
-  CSN_FILE="$ROOT/data/csn_test.jsonl"
-  LOCK_FILE="$ROOT/data/.csn.lock"
-  if [[ ! -f "$CSN_FILE" ]]; then
+if [[ "$TASK" == "ifeval" ]]; then
+  IFEVAL_FILE="$ROOT/data/ifeval_input_data.jsonl"
+  LOCK_FILE="$ROOT/data/.ifeval.lock"
+  if [[ ! -f "$IFEVAL_FILE" ]]; then
     mkdir -p "$ROOT/data"
     (
       flock 200
-      if [[ ! -f "$CSN_FILE" ]]; then
-        python federatedscope/llm/dataset/code_search_net.py
+      if [[ ! -f "$IFEVAL_FILE" ]]; then
+        python federatedscope/llm/dataset/ifeval.py
       fi
     ) 200>"$LOCK_FILE"
   fi
@@ -81,6 +81,8 @@ if [[ "$TASK" == "mmlu" ]]; then
   python federatedscope/llm/eval/eval_for_mmlu/eval.py --cfg "$EVAL_YAML"
 elif [[ "$TASK" == "gsm8k" ]]; then
   python federatedscope/llm/eval/eval_for_gsm8k/eval.py --cfg "$EVAL_YAML"
+elif [[ "$TASK" == "ifeval" ]]; then
+  python federatedscope/llm/eval/eval_for_ifeval/eval.py --cfg "$EVAL_YAML"
 else
-  python federatedscope/llm/eval/eval_for_code/eval.py --cfg "$EVAL_YAML"
+  python federatedscope/llm/eval/eval_for_humaneval/eval.py --cfg "$EVAL_YAML"
 fi

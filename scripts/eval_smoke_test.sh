@@ -70,25 +70,25 @@ submit_sbatch() {
 run mkdir -p logs results
 
 if [[ $SKIP_GLOBAL -eq 0 ]]; then
-  # Global sbatch index mapping: 0=mmlu,1=gsm8k,2=code llama2; 5=code qwen_moe
-  log "Submitting global code evaluation tasks..."
-  submit_sbatch "eval-global-code" --array=2,5 "$SBATCH_DIR/sbatch_eval_global.sbatch"
+  # Global sbatch index mapping: 0=mmlu,1=gsm8k,2=ifeval,3=humaneval llama2; 7=humaneval qwen_moe
+  log "Submitting global humaneval evaluation tasks..."
+  submit_sbatch "eval-global-humaneval" --array=3,7 "$SBATCH_DIR/sbatch_eval_global.sbatch"
 else
   log "Skipping global evaluation submission."
 fi
 
 if [[ $SKIP_CLIENTS -eq 0 ]]; then
-  # Client sbatch indices with code task: every third entry (2,5,8,11,14,17)
-  log "Submitting client code evaluation tasks..."
-  submit_sbatch "eval-clients-code" --array=2,5,8,11,14,17 "$SBATCH_DIR/sbatch_eval_clients.sbatch"
+  # Client sbatch indices with humaneval task: 3,7,11,15,19,23
+  log "Submitting client humaneval evaluation tasks..."
+  submit_sbatch "eval-clients-humaneval" --array=3,7,11,15,19,23 "$SBATCH_DIR/sbatch_eval_clients.sbatch"
 else
   log "Skipping client evaluation submission."
 fi
 
 if [[ $SKIP_BASELINES -eq 0 ]]; then
-  # Baseline sbatch indices with code task: 2,5,8,11,14,17,20,23
-  log "Submitting baseline code evaluation tasks..."
-  submit_sbatch "eval-baselines-code" --array=2,5,8,11,14,17,20,23 "$SBATCH_DIR/sbatch_eval_baselines.sbatch"
+  # Baseline sbatch indices with humaneval task: 3,7,11,15,19,23,27,31
+  log "Submitting baseline humaneval evaluation tasks..."
+  submit_sbatch "eval-baselines-humaneval" --array=3,7,11,15,19,23,27,31 "$SBATCH_DIR/sbatch_eval_baselines.sbatch"
 else
   log "Skipping baseline evaluation submission."
 fi

@@ -78,10 +78,10 @@ if ((${#dep_ids[@]} > 0)); then
   dependency_flags=(--dependency=afterok:"$(IFS=:; echo "${dep_ids[*]}")")
 fi
 
-submit_sbatch "eval-baselines-llama" "${dependency_flags[@]}" --array=0-14 "$SBATCH_DIR/sbatch_eval_baselines_full.sbatch"
-submit_sbatch "eval-global-llama" --array=0-2 "$SBATCH_DIR/sbatch_eval_global_full.sbatch"
-submit_sbatch "eval-clients-llama" --array=0-8 "$SBATCH_DIR/sbatch_eval_clients_full.sbatch"
-submit_sbatch "eval-unlearn-global-llama" --array=0-5 "$SBATCH_DIR/sbatch_eval_unlearn_global_full.sbatch"
-submit_sbatch "eval-unlearn-clients-llama" --array=0-17 "$SBATCH_DIR/sbatch_eval_unlearn_clients_full.sbatch"
+submit_sbatch "eval-baselines-llama" "${dependency_flags[@]}" --array=0-19 "$SBATCH_DIR/sbatch_eval_baselines_full.sbatch"
+submit_sbatch "eval-global-llama" --array=0-3 "$SBATCH_DIR/sbatch_eval_global_full.sbatch"
+submit_sbatch "eval-clients-llama" --array=0-11 "$SBATCH_DIR/sbatch_eval_clients_full.sbatch"
+submit_sbatch "eval-unlearn-global-llama" --array=0-7 "$SBATCH_DIR/sbatch_eval_unlearn_global_full.sbatch"
+submit_sbatch "eval-unlearn-clients-llama" --array=0-23 "$SBATCH_DIR/sbatch_eval_unlearn_clients_full.sbatch"
 
 log "Refresh submissions complete."

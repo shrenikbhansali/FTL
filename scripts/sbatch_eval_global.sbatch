@@ -6,19 +6,21 @@
 #SBATCH --time=08:00:00
 #SBATCH --output=logs/%x_%A_%a.out
 #SBATCH --error=logs/%x_%A_%a.err
-#SBATCH --array=0-5
+#SBATCH --array=0-7
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=sbhansali8@gatech.edu
 
-# 0: llama2 mmlu   1: llama2 gsm8k   2: llama2 code
-# 3: qwen_moe mmlu 4: qwen_moe gsm8k 5: qwen_moe code
+# 0: llama2 mmlu   1: llama2 gsm8k   2: llama2 ifeval   3: llama2 humaneval
+# 4: qwen_moe mmlu 5: qwen_moe gsm8k 6: qwen_moe ifeval 7: qwen_moe humaneval
 case $SLURM_ARRAY_TASK_ID in
   0) MODEL=llama2; TASK=mmlu;;
   1) MODEL=llama2; TASK=gsm8k;;
-  2) MODEL=llama2; TASK=code;;
-  3) MODEL=qwen_moe; TASK=mmlu;;
-  4) MODEL=qwen_moe; TASK=gsm8k;;
-  5) MODEL=qwen_moe; TASK=code;;
+  2) MODEL=llama2; TASK=ifeval;;
+  3) MODEL=llama2; TASK=humaneval;;
+  4) MODEL=qwen_moe; TASK=mmlu;;
+  5) MODEL=qwen_moe; TASK=gsm8k;;
+  6) MODEL=qwen_moe; TASK=ifeval;;
+  7) MODEL=qwen_moe; TASK=humaneval;;
 esac
 
 module load anaconda3
@@ -30,15 +32,15 @@ ROOT=$(pwd)
 RES_DIR=$ROOT/results/global/$MODEL/$TASK/$SLURM_JOB_ID
 mkdir -p "$RES_DIR"
 
-if [[ "$TASK" == "code" ]]; then
-  CSN_FILE="$ROOT/data/csn_test.jsonl"
-  LOCK_FILE="$ROOT/data/.csn.lock"
-  if [[ ! -f "$CSN_FILE" ]]; then
+if [[ "$TASK" == "ifeval" ]]; then
+  IFEVAL_FILE="$ROOT/data/ifeval_input_data.jsonl"
+  LOCK_FILE="$ROOT/data/.ifeval.lock"
+  if [[ ! -f "$IFEVAL_FILE" ]]; then
     mkdir -p "$ROOT/data"
     (
       flock 200
-      if [[ ! -f "$CSN_FILE" ]]; then
-        python federatedscope/llm/dataset/code_search_net.py
+      if [[ ! -f "$IFEVAL_FILE" ]]; then
+        python federatedscope/llm/dataset/ifeval.py
       fi
     ) 200>"$LOCK_FILE"
   fi
@@ -82,6 +84,8 @@ if [[ "$TASK" == "mmlu" ]]; then
   python federatedscope/llm/eval/eval_for_mmlu/eval.py --cfg "$EVAL_YAML"
 elif [[ "$TASK" == "gsm8k" ]]; then
   python federatedscope/llm/eval/eval_for_gsm8k/eval.py --cfg "$EVAL_YAML"
+elif [[ "$TASK" == "ifeval" ]]; then
+  python federatedscope/llm/eval/eval_for_ifeval/eval.py --cfg "$EVAL_YAML"
 else
-  python federatedscope/llm/eval/eval_for_code/eval.py --cfg "$EVAL_YAML"
+  python federatedscope/llm/eval/eval_for_humaneval/eval.py --cfg "$EVAL_YAML"
 fi

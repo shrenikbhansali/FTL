@@ -88,16 +88,16 @@ BASE_JOB=$(submit_sbatch "train-baselines-full" "$SBATCH_DIR/sbatch_train_baseli
 
 if [[ $SKIP_GLOBAL_EVAL -eq 0 ]]; then
   log "Submitting global evaluations..."
-  submit_sbatch "eval-global-full-llama" --dependency=afterok:${LLAMA_JOB} --array=0-2 "$SBATCH_DIR/sbatch_eval_global_full.sbatch"
-  submit_sbatch "eval-global-full-qwen" --dependency=afterok:${QWEN_JOB} --array=3-5 "$SBATCH_DIR/sbatch_eval_global_full.sbatch"
+  submit_sbatch "eval-global-full-llama" --dependency=afterok:${LLAMA_JOB} --array=0-3 "$SBATCH_DIR/sbatch_eval_global_full.sbatch"
+  submit_sbatch "eval-global-full-qwen" --dependency=afterok:${QWEN_JOB} --array=4-7 "$SBATCH_DIR/sbatch_eval_global_full.sbatch"
 else
   log "Skipping global evaluations."
 fi
 
 if [[ $SKIP_CLIENT_EVAL -eq 0 ]]; then
   log "Submitting client evaluations..."
-  submit_sbatch "eval-clients-full-llama" --dependency=afterok:${LLAMA_JOB} --array=0-8 "$SBATCH_DIR/sbatch_eval_clients_full.sbatch"
-  submit_sbatch "eval-clients-full-qwen" --dependency=afterok:${QWEN_JOB} --array=9-17 "$SBATCH_DIR/sbatch_eval_clients_full.sbatch"
+  submit_sbatch "eval-clients-full-llama" --dependency=afterok:${LLAMA_JOB} --array=0-11 "$SBATCH_DIR/sbatch_eval_clients_full.sbatch"
+  submit_sbatch "eval-clients-full-qwen" --dependency=afterok:${QWEN_JOB} --array=12-23 "$SBATCH_DIR/sbatch_eval_clients_full.sbatch"
 else
   log "Skipping client evaluations."
 fi

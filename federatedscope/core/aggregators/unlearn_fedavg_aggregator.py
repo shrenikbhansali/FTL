@@ -79,6 +79,8 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             if bank_cfg is not None else False
         send_flag = getattr(self.cfg.aggregator.unlearn,
                             'send_Q_to_clients', False)
+        log_stats = bool(
+            getattr(self.cfg.aggregator.unlearn, 'log_stats', True))
         round_idx = agg_info.get('round', 0)
         staleness = agg_info.get('staleness', [])
         client_ids = [client_id for client_id, _ in staleness]
@@ -204,16 +206,18 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                     except Exception as exc:
                         logger.warning(
                             "Failed to log UNLEARN stats to wandb: %s", exc)
-                for record in stats:
-                    logger.info(
-                        '[UNLEARN] key=%s ||perp||_F=%.4e ||parallel||_F='
-                        '%.4e rank=%.1f/%.1f energy=%.3f mode=%s alpha=%.3f '
-                        'lambda=%.3f beta=%.3f chunk=%d dtype=%s device=%s',
-                        record['key'], record['perp_norm'],
-                        record['parallel_norm'], record['rank_mean'],
-                        record['rank_full_mean'], record['energy_mean'], mode,
-                        alpha, lambda_shrink, beta_shared, chunk_rows,
-                        proj_dtype, self._device)
+                if log_stats:
+                    for record in stats:
+                        logger.info(
+                            '[UNLEARN] key=%s ||perp||_F=%.4e ||parallel||_F='
+                            '%.4e rank=%.1f/%.1f energy=%.3f mode=%s '
+                            'alpha=%.3f lambda=%.3f beta=%.3f chunk=%d '
+                            'dtype=%s device=%s', record['key'],
+                            record['perp_norm'], record['parallel_norm'],
+                            record['rank_mean'], record['rank_full_mean'],
+                            record['energy_mean'], mode, alpha,
+                            lambda_shrink, beta_shared, chunk_rows,
+                            proj_dtype, self._device)
         else:
             self._last_bases = {}
             self._last_bases_per_client = {}
@@ -344,15 +348,17 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                     except Exception as exc:
                         logger.warning(
                             "Failed to log bank stats to wandb: %s", exc)
-                for record in bank_stats:
-                    logger.info(
-                        '[UNLEARN][bank] key=%s global_frac=%.4f '
-                        'private_frac=%.4f resid_frac=%.4f '
-                        'alpha=%.3f beta_global=%.3f beta_resid=%.3f '
-                        'dtype=%s device=%s', record['key'],
-                        record['global_fraction'], record['private_fraction'],
-                        record['resid_fraction'], alpha, beta_global,
-                        beta_resid, proj_dtype, self._device)
+                if log_stats:
+                    for record in bank_stats:
+                        logger.info(
+                            '[UNLEARN][bank] key=%s global_frac=%.4f '
+                            'private_frac=%.4f resid_frac=%.4f '
+                            'alpha=%.3f beta_global=%.3f beta_resid=%.3f '
+                            'dtype=%s device=%s', record['key'],
+                            record['global_fraction'],
+                            record['private_fraction'],
+                            record['resid_fraction'], alpha, beta_global,
+                            beta_resid, proj_dtype, self._device)
 
         maybe_clear_cuda(self._device)
 

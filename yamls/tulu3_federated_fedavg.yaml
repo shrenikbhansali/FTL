@@ -7,7 +7,8 @@ federate:
   total_round_num: 338
   client_num: 7
   share_local_model: True
-  save_to: "ckpts/full/tulu3_federated_unlearn_bank_perclient.ckpt"
+  method: FedAvg
+  save_to: "ckpts/full/tulu3_federated_fedavg.ckpt"
 
 data:
   root: data/
@@ -45,31 +46,6 @@ llm:
           modules_to_save: ["embed_tokens","lm_head"]
         }
 
-aggregator:
-  type: "unlearn_fedavg"
-  unlearn:
-    enable: True
-    mode: "shrink"
-    lambda_shrink: 1.0
-    beta_shared: 0.2
-    alpha_global: 1.0
-    only_lora: True
-    target_modules: ["q_proj","k_proj","v_proj","o_proj"]
-    proj_dtype: "float32"
-    chunk_rows: 4096
-    send_Q_to_clients: True
-    log_stats: False
-    bank:
-      enable: True
-      r_global: 4
-      r_client: 4
-      beta_global: 1.0
-      beta_resid: 0.0
-      energy_target: 0.0
-      bank_send_per_client: True
-      bank_proj_mode: "others_private"
-      bank_proj_rank_max: 0
-
 trainer:
   type: llmtrainer
 
@@ -77,10 +53,6 @@ train:
   local_update_steps: 30
   batch_or_epoch: batch
   is_enable_half: True
-  unlearn:
-    project_grads: True
-    proj_rho: 1.0
-    bank_use_per_client: True
   optimizer:
     type: Adam
     lr: 1.0e-4

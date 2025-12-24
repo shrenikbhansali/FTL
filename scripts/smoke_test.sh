@@ -93,12 +93,12 @@ if [[ $SKIP_BASELINES -eq 0 ]]; then
 fi
 
 log "Submitting global evaluation arrays..."
-submit_sbatch "eval-global-llama" --dependency=afterok:${LLAMA_JOB} --array=0-2 "$SBATCH_DIR/sbatch_eval_global.sbatch"
-submit_sbatch "eval-global-qwen" --dependency=afterok:${QWEN_JOB} --array=3-5 "$SBATCH_DIR/sbatch_eval_global.sbatch"
+submit_sbatch "eval-global-llama" --dependency=afterok:${LLAMA_JOB} --array=0-3 "$SBATCH_DIR/sbatch_eval_global.sbatch"
+submit_sbatch "eval-global-qwen" --dependency=afterok:${QWEN_JOB} --array=4-7 "$SBATCH_DIR/sbatch_eval_global.sbatch"
 
 log "Submitting per-client evaluation arrays..."
-submit_sbatch "eval-clients-llama" --dependency=afterok:${LLAMA_JOB} --array=0-8 "$SBATCH_DIR/sbatch_eval_clients.sbatch"
-submit_sbatch "eval-clients-qwen" --dependency=afterok:${QWEN_JOB} --array=9-17 "$SBATCH_DIR/sbatch_eval_clients.sbatch"
+submit_sbatch "eval-clients-llama" --dependency=afterok:${LLAMA_JOB} --array=0-11 "$SBATCH_DIR/sbatch_eval_clients.sbatch"
+submit_sbatch "eval-clients-qwen" --dependency=afterok:${QWEN_JOB} --array=12-23 "$SBATCH_DIR/sbatch_eval_clients.sbatch"
 
 if [[ $SKIP_BASELINES -eq 0 ]]; then
   log "Submitting baseline evaluations..."

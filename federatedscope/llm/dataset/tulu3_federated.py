@@ -76,24 +76,51 @@ def load_tulu3_federated_data(config, client_cfgs=None):
     tokenizer, _ = get_tokenizer(model_name, config.data.root,
                                  config.llm.tok_len, model_hub)
 
+    merge_clients = bool(getattr(cfg, "merge_clients", False))
     client_data = {}
-    for idx, name in enumerate(requested_names, start=1):
-        entry = available_clients[name]
-        train_path = dataset_root / entry["train_file"]
-        val_path = dataset_root / entry["val_file"]
-        train_samples = _read_jsonl(train_path)
-        val_samples = _read_jsonl(val_path)
-        train_dataset = _build_client_data(train_samples, tokenizer, config.llm.tok_len)
-        val_dataset = _build_client_data(val_samples, tokenizer, config.llm.tok_len)
-        if train_dataset is None:
-            raise ValueError(
-                f"Client {name} has no training samples. Expected data at {train_path}")
-        client_data[idx] = ClientData(config,
-                                      train=train_dataset,
-                                      val=val_dataset if val_dataset else None,
-                                      test=None)
-        logger.info("Client %s -> train=%d, val=%d", name, len(train_samples),
-                    len(val_samples))
+    if merge_clients:
+        merged_train = []
+        merged_val = []
+        for name in requested_names:
+            entry = available_clients[name]
+            train_path = dataset_root / entry["train_file"]
+            val_path = dataset_root / entry["val_file"]
+            train_samples = _read_jsonl(train_path)
+            val_samples = _read_jsonl(val_path)
+            if not train_samples:
+                raise ValueError(
+                    f"Client {name} has no training samples. Expected data at {train_path}")
+            merged_train.extend(train_samples)
+            merged_val.extend(val_samples)
+            logger.info("Client %s -> train=%d, val=%d", name, len(train_samples),
+                        len(val_samples))
+
+        train_dataset = _build_client_data(merged_train, tokenizer, config.llm.tok_len)
+        val_dataset = _build_client_data(merged_val, tokenizer, config.llm.tok_len)
+        client_data[1] = ClientData(config,
+                                    train=train_dataset,
+                                    val=val_dataset if val_dataset else None,
+                                    test=None)
+        logger.info("Merged clients -> train=%d, val=%d", len(merged_train),
+                    len(merged_val))
+    else:
+        for idx, name in enumerate(requested_names, start=1):
+            entry = available_clients[name]
+            train_path = dataset_root / entry["train_file"]
+            val_path = dataset_root / entry["val_file"]
+            train_samples = _read_jsonl(train_path)
+            val_samples = _read_jsonl(val_path)
+            train_dataset = _build_client_data(train_samples, tokenizer, config.llm.tok_len)
+            val_dataset = _build_client_data(val_samples, tokenizer, config.llm.tok_len)
+            if train_dataset is None:
+                raise ValueError(
+                    f"Client {name} has no training samples. Expected data at {train_path}")
+            client_data[idx] = ClientData(config,
+                                          train=train_dataset,
+                                          val=val_dataset if val_dataset else None,
+                                          test=None)
+            logger.info("Client %s -> train=%d, val=%d", name, len(train_samples),
+                        len(val_samples))
 
     if len(client_data) == 0:
         raise RuntimeError("No client datasets were loaded. Please verify the manifest and config.")
