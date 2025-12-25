@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=fsllm-eval-tulu-global
-#SBATCH --gres=gpu:H100:1
+#SBATCH --gres=gpu:H200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-gpu=224G
 #SBATCH --time=08:00:00
@@ -19,6 +19,8 @@ EXP=${EXPS[$EXP_IDX]}
 TASK=${TASKS[$TASK_IDX]}
 
 module load anaconda3
+conda init bash >/dev/null 2>&1 || true
+source ~/.bashrc
 conda activate fs-llm
 export HF_HOME=/home/hice1/sbhansali8/scratch
 cd /home/hice1/sbhansali8/scratch/FederatedScope

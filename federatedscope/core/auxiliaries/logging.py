@@ -1,5 +1,6 @@
 import copy
 import json
+import re
 import logging
 import os
 import re
@@ -199,6 +200,11 @@ def logfile_2_wandb_dict(exp_log_f, raw_out=True):
 
 
 def logline_2_wandb_dict(exp_stop_normal, line, log_res_best, raw_out):
+    def _sanitize_json_like(payload: str) -> str:
+        payload = re.sub(r'(?<=[:\s])-?inf(?=[,\}])', 'null', payload, flags=re.IGNORECASE)
+        payload = re.sub(r'(?<=[:\s])nan(?=[,\}])', 'null', payload, flags=re.IGNORECASE)
+        return payload
+
     log_res = {}
     if "INFO:" in line and "Find new best result for" in line:
         # Logger type 1, each line for each metric, e.g.,
@@ -221,7 +227,11 @@ def logline_2_wandb_dict(exp_stop_normal, line, log_res_best, raw_out):
         # 36, 'val_avg_loss': 3.693923234939575, 'val_correct': 4.0,
         # 'val_acc': 0.1111111111111111}}
         line = line.replace("Find new best result: ", "").replace("\'", "\"")
-        res = json.loads(s=line)
+        line = _sanitize_json_like(line)
+        try:
+            res = json.loads(s=line)
+        except json.JSONDecodeError:
+            return exp_stop_normal, log_res
         for best_type_key, val in res.items():
             for inner_key, inner_val in val.items():
                 log_res_best[f"best_{best_type_key}/{inner_key}"] = inner_val
@@ -230,7 +240,11 @@ def logline_2_wandb_dict(exp_stop_normal, line, log_res_best, raw_out):
         if raw_out:
             line = line.split("INFO: ")[1]
         res = line.replace("\'", "\"")
-        res = json.loads(s=res)
+        res = _sanitize_json_like(res)
+        try:
+            res = json.loads(s=res)
+        except json.JSONDecodeError:
+            return exp_stop_normal, log_res
         # pre-process the roles
         cur_round = res['Round']
         if "Server" in res['Role']:

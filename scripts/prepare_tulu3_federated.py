@@ -109,11 +109,15 @@ class SampleProcessor:
                  tokenizer,
                  max_length: int,
                  min_assistant_tokens: int,
+                 trim_user_overflow: bool,
+                 trim_user_token_limit: int,
                  trim_overflow: bool,
                  trim_token_limit: int):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.min_assistant_tokens = max(min_assistant_tokens, 1)
+        self.trim_user_overflow = trim_user_overflow
+        self.trim_user_token_limit = trim_user_token_limit
         self.trim_overflow = trim_overflow
         self.trim_token_limit = trim_token_limit
 
@@ -135,6 +139,18 @@ class SampleProcessor:
             record["messages"] = messages
             return record, meta
 
+        if self.trim_user_overflow:
+            user_trimmed_messages, did_trim = self._trim_user_turns(messages)
+            if did_trim:
+                new_tokens = self._count_assistant_tokens(user_trimmed_messages)
+                if new_tokens >= self.min_assistant_tokens:
+                    new_record = copy.deepcopy(record)
+                    new_record["messages"] = user_trimmed_messages
+                    meta["trimmed"] = True
+                    meta["assistant_tokens"] = new_tokens
+                    meta["reason"] = None
+                    return new_record, meta
+
         if self.trim_overflow:
             trimmed_messages, did_trim = self._trim_final_assistant(messages)
             if did_trim:
@@ -149,6 +165,23 @@ class SampleProcessor:
 
         meta["reason"] = "insufficient_assistant_tokens"
         return None, meta
+
+    def _trim_user_turns(self, messages: List[Dict]) -> Tuple[List[Dict], bool]:
+        trimmed = False
+        new_messages = copy.deepcopy(messages)
+        for msg in new_messages:
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content", "")
+            tokens = self.tokenizer.encode(content,
+                                           add_special_tokens=False)
+            if len(tokens) <= self.trim_user_token_limit:
+                continue
+            tokens = tokens[-self.trim_user_token_limit:]
+            msg["content"] = self.tokenizer.decode(tokens,
+                                                   skip_special_tokens=True)
+            trimmed = True
+        return new_messages, trimmed
 
     def _normalize_messages(self,
                             messages: List[Dict]) -> Tuple[Optional[List[Dict]], Optional[str]]:
@@ -365,6 +398,8 @@ def build_sample_processor(args) -> Optional[SampleProcessor]:
     return SampleProcessor(tokenizer=tokenizer,
                            max_length=args.filter_max_length,
                            min_assistant_tokens=args.filter_min_assistant_tokens,
+                           trim_user_overflow=args.filter_trim_user_overflow,
+                           trim_user_token_limit=args.filter_user_tail_tokens,
                            trim_overflow=args.filter_trim_overflow,
                            trim_token_limit=args.filter_assistant_tail_tokens)
 
@@ -592,6 +627,14 @@ def main():
                         type=int,
                         default=1,
                         help="Minimum assistant tokens required to keep a sample.")
+    parser.add_argument("--filter-trim-user-overflow",
+                        action="store_true",
+                        help="Trim user turns before dropping long samples.")
+    parser.add_argument("--filter-user-tail-tokens",
+                        type=int,
+                        default=1024,
+                        help="If trimming user turns, keep only this many tokens "
+                             "from the end of each user message.")
     parser.add_argument("--filter-trim-overflow",
                         action="store_true",
                         help="Trim the final assistant turn instead of dropping "

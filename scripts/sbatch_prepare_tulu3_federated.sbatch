@@ -1,9 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=fsllm-train-tulu-fedavg
-#SBATCH --gres=gpu:H200:1
+#SBATCH --job-name=fsllm-prepare-tulu-data
 #SBATCH --cpus-per-task=8
-#SBATCH --mem-per-gpu=224G
-#SBATCH --time=12:00:00
+#SBATCH --mem=64G
+#SBATCH --time=4:00:00
 #SBATCH --output=logs/%x_%A.out
 #SBATCH --error=logs/%x_%A.err
 #SBATCH --mail-type=FAIL
@@ -19,4 +18,10 @@ export WANDB_ENTITY=sbhansali8-georgia-institute-of-technology
 export WANDB_PROJECT=FTL-Dev
 cd /home/hice1/sbhansali8/scratch/FederatedScope
 
-python federatedscope/main.py --cfg yamls/tulu3_federated_fedavg.yaml
+python scripts/prepare_tulu3_federated.py \
+  --output-dir data/tulu3_federated \
+  --enable-length-filter \
+  --filter-tokenizer-name meta-llama/Llama-2-7b-hf \
+  --filter-max-length 2048 \
+  --filter-min-assistant-tokens 1 \
+  --overwrite

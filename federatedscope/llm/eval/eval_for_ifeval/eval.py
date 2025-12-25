@@ -22,10 +22,14 @@ IFEVAL_FILE = "ifeval_input_data.jsonl"
 
 
 def _ensure_open_instruct_on_path():
-    root_dir = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "../../../../../")
-    )
-    open_instruct_root = os.path.join(root_dir, "materials", "open-instruct")
+    env_root = os.environ.get("OPEN_INSTRUCT_ROOT")
+    if env_root:
+        open_instruct_root = env_root
+    else:
+        root_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "../../../../")
+        )
+        open_instruct_root = os.path.join(root_dir, "materials", "open-instruct")
     if open_instruct_root not in sys.path:
         sys.path.insert(0, open_instruct_root)
 
