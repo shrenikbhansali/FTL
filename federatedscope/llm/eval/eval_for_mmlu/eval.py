@@ -133,11 +133,19 @@ def main():
 
     data_dir = os.path.join(init_cfg.data.root, "mmlu/data")
     eval_dir = "eval_result"
+    if hasattr(init_cfg, "outdir") and init_cfg.outdir:
+        eval_dir = os.path.join(init_cfg.outdir, "eval_result")
 
     subjects = sorted([
         f.split("_test.csv")[0]
         for f in os.listdir(os.path.join(data_dir, "test")) if "_test.csv" in f
     ])
+    max_samples_per_subject = None
+    if hasattr(init_cfg, "eval") and hasattr(init_cfg.eval, "max_samples_per_subject"):
+        max_samples_per_subject = int(init_cfg.eval.max_samples_per_subject)
+    elif hasattr(init_cfg, "eval") and hasattr(init_cfg.eval, "max_samples"):
+        # Backward-compatible: treat max_samples as per-subject cap.
+        max_samples_per_subject = int(init_cfg.eval.max_samples)
 
     if not os.path.exists(eval_dir):
         os.makedirs(eval_dir)
@@ -162,6 +170,8 @@ def main():
         test_df = pd.read_csv(os.path.join(data_dir, "test",
                                            subject + "_test.csv"),
                               header=None)
+        if max_samples_per_subject is not None and len(test_df) > max_samples_per_subject:
+            test_df = test_df.iloc[:max_samples_per_subject]
 
         cors, acc, probs = eval(subject, model, tokenizer, dev_df, test_df,
                                 device)
@@ -187,16 +197,21 @@ def main():
 
     results = {"subcategories": {}, "categories": {}}
     for subcat in subcat_cors:
+        if len(subcat_cors[subcat]) == 0:
+            continue
         subcat_acc = np.mean(np.concatenate(subcat_cors[subcat]))
         print("Average accuracy {:.3f} - {}".format(subcat_acc, subcat))
 
     for cat in cat_cors:
+        if len(cat_cors[cat]) == 0:
+            continue
         cat_acc = np.mean(np.concatenate(cat_cors[cat]))
         results["categories"][cat] = cat_acc
         print("Average accuracy {:.3f} - {}".format(cat_acc, cat))
-    weighted_acc = np.mean(np.concatenate(all_cors))
-    results["weighted_accuracy"] = weighted_acc
-    print("Average accuracy: {:.3f}".format(weighted_acc))
+    if len(all_cors) > 0:
+        weighted_acc = np.mean(np.concatenate(all_cors))
+        results["weighted_accuracy"] = weighted_acc
+        print("Average accuracy: {:.3f}".format(weighted_acc))
 
     results_file = os.path.join(
         eval_dir, "accuracies_{}.json".format(

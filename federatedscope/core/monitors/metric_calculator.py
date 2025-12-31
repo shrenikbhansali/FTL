@@ -265,6 +265,14 @@ def eval_total(ctx, **kwargs):
     return ctx.num_samples
 
 
+def eval_nan_batches(ctx, **kwargs):
+    return int(getattr(ctx, "nan_batch_count", 0))
+
+
+def eval_skipped_batches(ctx, **kwargs):
+    return int(getattr(ctx, "skipped_batch_count", 0))
+
+
 def eval_regular(ctx, **kwargs):
     return ctx.loss_regular_total
 
@@ -291,6 +299,8 @@ SUPPORT_METRICS = {
     'loss': (eval_loss, False),
     'avg_loss': (eval_avg_loss, False),
     'total': (eval_total, False),
+    'nan_batches': (eval_nan_batches, False),
+    'skipped_batches': (eval_skipped_batches, False),
     'correct': (eval_correct, True),
     'acc': (eval_acc, True),
     'ap': (eval_ap, True),

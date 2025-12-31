@@ -340,10 +340,14 @@ class Server(BaseServer):
                 self.state += 1
                 if self.state % self._cfg.eval.freq == 0 and self.state != \
                         self.total_round_num:
-                    #  Evaluate
-                    logger.info(f'Server: Starting evaluation at the end '
-                                f'of round {self.state - 1}.')
-                    self.eval()
+                    if self._cfg.eval.split:
+                        #  Evaluate
+                        logger.info(f'Server: Starting evaluation at the end '
+                                    f'of round {self.state - 1}.')
+                        self.eval()
+                    else:
+                        logger.info('Server: Skipping evaluation '
+                                    '(eval.split is empty).')
 
                 if self.state < self.total_round_num:
                     # Move to next round of training
@@ -357,10 +361,22 @@ class Server(BaseServer):
                     # Start a new training round
                     self._start_new_training_round(aggregated_num)
                 else:
-                    # Final Evaluate
-                    logger.info('Server: Training is finished! Starting '
-                                'evaluation.')
-                    self.eval()
+                    if self._cfg.eval.split:
+                        # Final Evaluate
+                        logger.info('Server: Training is finished! Starting '
+                                    'evaluation.')
+                        self.eval()
+                    else:
+                        logger.info(
+                            'Server: Training is finished! Skipping '
+                            'evaluation.')
+                        if self._cfg.federate.save_to != '' and \
+                                self.ds_rank == 0:
+                            self.aggregator.save_model(
+                                add_prefix_to_path('final_',
+                                                   self._cfg.federate.save_to),
+                                self.state)
+                        self.terminate(msg_type='finish')
 
             else:
                 # Receiving enough feedback in the evaluation process
@@ -991,6 +1007,9 @@ class Server(BaseServer):
         To conduct evaluation. When ``cfg.federate.make_global_eval=True``, \
         a global evaluation is conducted by the server.
         """
+        if not self._cfg.eval.split:
+            logger.info('Server: eval skipped (eval.split is empty).')
+            return
 
         if self._cfg.federate.make_global_eval:
             # By default, the evaluation is conducted one-by-one for all

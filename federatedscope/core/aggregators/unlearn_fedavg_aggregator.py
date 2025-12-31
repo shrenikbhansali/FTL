@@ -311,7 +311,8 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                             'key': key,
                             'global_fraction': global_mean,
                             'private_fraction': private_mean,
-                            'resid_fraction': resid_mean
+                            'resid_fraction': resid_mean,
+                            'numel': int(base_tensor.numel()),
                         })
 
             if send_flag and bank_send_per_client and private_bases:
@@ -323,6 +324,20 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             self._last_bases_per_client = per_client_payload
 
             if bank_stats:
+                total_numel = sum(item['numel'] for item in bank_stats)
+                if total_numel > 0:
+                    weighted_global = sum(
+                        item['global_fraction'] * item['numel']
+                        for item in bank_stats) / total_numel
+                    weighted_private = sum(
+                        item['private_fraction'] * item['numel']
+                        for item in bank_stats) / total_numel
+                    weighted_resid = sum(
+                        item['resid_fraction'] * item['numel']
+                        for item in bank_stats) / total_numel
+                else:
+                    weighted_global = weighted_private = weighted_resid = 0.0
+
                 if getattr(self.cfg, 'wandb', None) and self.cfg.wandb.use:
                     try:
                         import wandb
@@ -339,6 +354,12 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                                     'private_fraction']
                             log_payload[f'{base_tag}/resid_fraction'] = record[
                                 'resid_fraction']
+                        log_payload['unlearn_bank/summary/global_fraction'] = \
+                            weighted_global
+                        log_payload['unlearn_bank/summary/private_fraction'] = \
+                            weighted_private
+                        log_payload['unlearn_bank/summary/resid_fraction'] = \
+                            weighted_resid
                         if log_payload:
                             wandb.log(log_payload, step=round_idx)
                     except ImportError:
@@ -359,6 +380,12 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                             record['private_fraction'],
                             record['resid_fraction'], alpha, beta_global,
                             beta_resid, proj_dtype, self._device)
+                    logger.info(
+                        '[UNLEARN][bank][avg] global_frac=%.4f '
+                        'private_frac=%.4f resid_frac=%.4f '
+                        'alpha=%.3f beta_global=%.3f beta_resid=%.3f',
+                        weighted_global, weighted_private, weighted_resid,
+                        alpha, beta_global, beta_resid)
 
         maybe_clear_cuda(self._device)
 

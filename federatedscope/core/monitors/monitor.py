@@ -713,14 +713,20 @@ class Monitor(object):
                                 "unseen_client_best_individual"
                         ]:
                             # Obtain the whether the larger the better
+                            skip_key = False
                             for mode in ['train', 'val', 'test']:
                                 if mode in key:
                                     _key = key.split(f'{mode}_')[1]
+                                    if _key not in self.metric_calculator.eval_metric:
+                                        skip_key = True
+                                        break
                                     if self.metric_calculator.eval_metric[
                                             _key][1]:
                                         cur_result = max(cur_result)
                                     else:
                                         cur_result = min(cur_result)
+                            if skip_key:
+                                continue
                         best_result[key] = cur_result
 
         if update_best_this_round:

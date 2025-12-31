@@ -68,8 +68,12 @@ def main():
     setup_seed(init_cfg.seed)
 
     fschatbot = FSChatBot(init_cfg)
-    out_file = f"{init_cfg.federate.save_to}_humaneval_answer.jsonl"
-    _ensure_parent_dir(out_file)
+    eval_dir = "eval_result"
+    if hasattr(init_cfg, "outdir") and init_cfg.outdir:
+        eval_dir = os.path.join(init_cfg.outdir, "eval_result")
+    os.makedirs(eval_dir, exist_ok=True)
+    save_name = init_cfg.federate.save_to.replace("/", "_")
+    out_file = os.path.join(eval_dir, f"{save_name}_humaneval_answer.jsonl")
 
     data_root = init_cfg.data.root if hasattr(init_cfg, "data") else "data"
     os.makedirs(data_root, exist_ok=True)
@@ -142,9 +146,6 @@ def main():
         print(error)
         return
 
-    eval_dir = "eval_result"
-    os.makedirs(eval_dir, exist_ok=True)
-    save_name = init_cfg.federate.save_to.replace("/", "_")
     out_path = os.path.join(
         eval_dir, f"accuracies_{save_name}__humaneval.json"
     )

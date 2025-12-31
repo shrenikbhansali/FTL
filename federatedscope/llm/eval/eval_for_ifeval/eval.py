@@ -147,6 +147,8 @@ def main():
     }
 
     eval_dir = "eval_result"
+    if hasattr(init_cfg, "outdir") and init_cfg.outdir:
+        eval_dir = os.path.join(init_cfg.outdir, "eval_result")
     os.makedirs(eval_dir, exist_ok=True)
     save_name = init_cfg.federate.save_to.replace("/", "_")
     out_path = os.path.join(eval_dir, f"accuracies_{save_name}__ifeval.json")

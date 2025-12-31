@@ -70,13 +70,20 @@ class FSChatBot(object):
             except Exception as error:
                 print(f"{error}, will use raw model.")
 
-        if config.train.is_enable_half:
+        precision = getattr(config.train, 'precision', None)
+        if precision is None:
+            precision = 'fp16' if config.train.is_enable_half else 'fp32'
+        precision = str(precision).lower()
+        if precision == 'bf16':
+            self.model = self.model.to(dtype=torch.bfloat16)
+        elif precision == 'fp16' or config.train.is_enable_half:
             self.model.half()
 
         self.model = self.model.to(self.device)
         self.model = self.model.eval()
-        if torch.__version__ >= "2" and sys.platform != "win32":
-            self.model = torch.compile(self.model)
+        if getattr(config.train, "compile", False):
+            if torch.__version__ >= "2" and sys.platform != "win32":
+                self.model = torch.compile(self.model)
 
         self.max_history_len = config.llm.chat.max_history_len
         self.max_len = config.llm.chat.max_len

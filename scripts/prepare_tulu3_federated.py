@@ -14,6 +14,23 @@ Usage example::
         --output-dir data/tulu3_federated \
         --client-config materials/tulu3_clients.yaml
 
+To group by constituent dataset sources instead of task families::
+
+    python scripts/prepare_tulu3_federated.py \
+        --output-dir data/tulu3_federated_by_source \
+        --group-by source
+
+You can shard each task family into multiple clients by adding
+``num_shards`` (or ``shard_names``) per entry in the client config, e.g.::
+
+    clients:
+      - name_prefix: chat_client
+        families: [chat]
+        num_shards: 3
+      - name_prefix: qa_client
+        families: [qa]
+        num_shards: 3
+
 The produced directory contains one sub-directory per client with
 ``train.jsonl``/``val.jsonl`` files and a manifest describing the
 configuration.
@@ -21,8 +38,10 @@ configuration.
 
 import argparse
 import copy
+import hashlib
 import json
 import os
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -424,6 +443,112 @@ def load_client_config(path: Path) -> Dict[str, Sequence[Dict[str, Sequence[str]
     return data
 
 
+def _parse_families(spec: Dict) -> List[str]:
+    families = spec.get("families")
+    if families is None:
+        families = spec.get("family")
+    if families is None:
+        raise ValueError(f"Client spec is missing families: {spec}")
+    if isinstance(families, str):
+        families = [families]
+    if not isinstance(families, (list, tuple)) or not families:
+        raise ValueError(f"Client spec families must be a non-empty list: {spec}")
+    return list(families)
+
+
+def _normalize_shard_names(spec: Dict, num_shards: int) -> List[str]:
+    shard_names = spec.get("shard_names")
+    if shard_names is None:
+        shard_names = spec.get("names")
+    if shard_names is None:
+        return []
+    if not isinstance(shard_names, (list, tuple)):
+        raise ValueError(
+            f"shard_names must be a list when provided: {spec}")
+    if num_shards is not None and len(shard_names) != num_shards:
+        raise ValueError(
+            f"shard_names length ({len(shard_names)}) does not match num_shards "
+            f"({num_shards}) in {spec}")
+    return list(shard_names)
+
+
+def normalize_client_specs(raw_clients: Sequence[Dict], filter_key: str) -> List[Dict]:
+    groups = []
+    for spec in raw_clients:
+        if not isinstance(spec, dict):
+            raise ValueError(f"Client spec must be a dict: {spec}")
+        if filter_key == "task_family":
+            labels = _parse_families(spec)
+        else:
+            labels = spec.get("sources")
+            if labels is None:
+                raise ValueError(
+                    f"Client spec is missing sources for group-by {filter_key}: {spec}")
+            if isinstance(labels, str):
+                labels = [labels]
+            if not isinstance(labels, (list, tuple)) or not labels:
+                raise ValueError(
+                    f"Client spec sources must be a non-empty list: {spec}")
+        num_shards = spec.get("num_shards")
+        if num_shards is None:
+            num_shards = spec.get("shards")
+        shard_names = _normalize_shard_names(spec, num_shards)
+        if num_shards is None:
+            num_shards = len(shard_names) if shard_names else 1
+        if not isinstance(num_shards, int) or num_shards < 1:
+            raise ValueError(f"num_shards must be a positive int: {spec}")
+
+        if num_shards == 1:
+            name = spec.get("name") or (shard_names[0] if shard_names else None)
+            if not name:
+                raise ValueError(f"Single client spec missing name: {spec}")
+            names = [name]
+        else:
+            if shard_names:
+                names = shard_names
+            else:
+                prefix = spec.get("name_prefix") or spec.get("name")
+                if not prefix:
+                    raise ValueError(
+                        f"Sharded client spec missing name_prefix/name: {spec}")
+                names = [f"{prefix}_{idx + 1}" for idx in range(num_shards)]
+
+        groups.append({
+            "labels": list(labels),
+            "names": names,
+            "filter_key": filter_key,
+        })
+    return groups
+
+
+def _sanitize_source_name(source: str, max_len: int = 64) -> str:
+    base = source.split("/")[-1]
+    slug = re.sub(r"[^A-Za-z0-9_]+", "_", base).strip("_")
+    if not slug:
+        slug = "source"
+    if len(slug) > max_len:
+        digest = hashlib.md5(source.encode("utf-8")).hexdigest()[:8]
+        slug = f"{slug[:max_len - 9]}_{digest}"
+    return slug
+
+
+def build_source_groups(sources: Sequence[str]) -> List[Dict]:
+    used = set()
+    groups = []
+    for src in sources:
+        name = _sanitize_source_name(src)
+        if name in used:
+            digest = hashlib.md5(src.encode("utf-8")).hexdigest()[:8]
+            name = f"{name}_{digest}"
+        used.add(name)
+        groups.append({
+            "labels": [src],
+            "names": [name],
+            "filter_key": "source",
+        })
+    return groups
+
+
 def ensure_output_dir(path: Path, overwrite: bool) -> None:
     if path.exists() and not overwrite:
         raise FileExistsError(
@@ -505,61 +630,100 @@ def process_and_save_split(split_ds,
     return kept, dropped, trimmed, reasons
 
 
+def split_dataset_into_shards(dataset, num_shards: int, seed: int):
+    if num_shards == 1:
+        return [dataset]
+    dataset = dataset.shuffle(seed=seed)
+    total = len(dataset)
+    base = total // num_shards
+    remainder = total % num_shards
+    sizes = [base + (1 if idx < remainder else 0) for idx in range(num_shards)]
+    shards = []
+    offset = 0
+    for size in sizes:
+        if size == 0:
+            shard = dataset.select([])
+        else:
+            shard = dataset.select(range(offset, offset + size))
+        shards.append(shard)
+        offset += size
+    return shards
+
+
 def prepare_clients(dataset,
-                    client_specs: Sequence[Dict],
+                    client_groups: Sequence[Dict],
                     args,
                     stats_recorder: StatsRecorder,
                     processor: Optional[SampleProcessor]):
     output_root = Path(args.output_dir)
     manifest_clients: List[Dict] = []
-    for spec in client_specs:
-        name = spec.get("name")
-        families = set(spec.get("families", []))
-        if not name or not families:
-            raise ValueError(f"Invalid client spec: {spec}")
-        unknown = [fam for fam in families if fam not in FAMILY_CHOICES]
-        if unknown:
+    for group_idx, group in enumerate(client_groups):
+        labels = group.get("labels") or group.get("families") or group.get("sources")
+        if not labels:
+            raise ValueError(f"Invalid client group: {group}")
+        filter_key = group.get("filter_key", "task_family")
+        if filter_key == "task_family":
+            unknown = [lab for lab in labels if lab not in FAMILY_CHOICES]
+            if unknown:
+                raise ValueError(
+                    f"Client group refers to unsupported families: {unknown}")
+        names = group.get("names") or []
+        if not names:
+            raise ValueError(f"Client group missing names: {group}")
+
+        subset = dataset.filter(lambda ex: ex[filter_key] in labels)
+        if len(subset) < len(names):
             raise ValueError(
-                f"Client {name} refers to unsupported families: {unknown}")
-        subset = dataset.filter(lambda ex: ex["task_family"] in families)
-        subset = downsample(subset, args.max_examples_per_client, args.seed)
-        sorted_families = sorted(families)
-        stats_recorder.register_client(name, sorted_families, len(subset))
-        train_ds, val_ds = train_val_split(subset, args.val_frac, args.seed)
-        if len(train_ds) == 0:
-            print(f"[WARN] Skipping client {name}: no samples for families {families}")
-            continue
-        client_dir = output_root / name
-        train_path = client_dir / "train.jsonl"
-        val_path = client_dir / "val.jsonl"
-        train_kept, train_dropped, train_trimmed, train_reasons = \
-            process_and_save_split(train_ds, train_path, processor)
-        val_kept, val_dropped, val_trimmed, val_reasons = \
-            process_and_save_split(val_ds, val_path, processor)
+                f"Requested {len(names)} shards for {filter_key} {sorted(labels)}, "
+                f"but only {len(subset)} samples are available.")
+        sorted_labels = sorted(labels)
+        shards = split_dataset_into_shards(subset, len(names),
+                                           seed=args.seed + group_idx)
 
-        stats_recorder.record_split(name, "train", len(train_ds), train_kept,
-                                    train_dropped, train_trimmed,
-                                    train_reasons)
-        stats_recorder.record_split(name, "val", len(val_ds), val_kept,
-                                    val_dropped, val_trimmed, val_reasons)
+        for shard_idx, (name, shard) in enumerate(zip(names, shards)):
+            shard_seed = args.seed + group_idx * 1000 + shard_idx
+            shard = downsample(shard, args.max_examples_per_client, shard_seed)
+            stats_recorder.register_client(name, sorted_labels, len(shard))
+            train_ds, val_ds = train_val_split(shard, args.val_frac, shard_seed)
+            if len(train_ds) == 0:
+                print(f"[WARN] Skipping client {name}: no samples for {filter_key} {labels}")
+                continue
+            client_dir = output_root / name
+            train_path = client_dir / "train.jsonl"
+            val_path = client_dir / "val.jsonl"
+            train_kept, train_dropped, train_trimmed, train_reasons = \
+                process_and_save_split(train_ds, train_path, processor)
+            val_kept, val_dropped, val_trimmed, val_reasons = \
+                process_and_save_split(val_ds, val_path, processor)
 
-        if train_kept == 0:
-            print(f"[WARN] Skipping client {name}: no training data after filtering")
-            if train_path.exists():
-                train_path.unlink()
-            if val_path.exists():
-                val_path.unlink()
-            continue
-        stats_recorder.accumulate_family_counts(sorted_families,
-                                                train_kept + val_kept)
-        manifest_clients.append({
-            "name": name,
-            "families": sorted_families,
-            "train_examples": train_kept,
-            "val_examples": val_kept,
-            "train_file": relative_path(train_path, output_root),
-            "val_file": relative_path(val_path, output_root),
-        })
+            stats_recorder.record_split(name, "train", len(train_ds), train_kept,
+                                        train_dropped, train_trimmed,
+                                        train_reasons)
+            stats_recorder.record_split(name, "val", len(val_ds), val_kept,
+                                        val_dropped, val_trimmed, val_reasons)
+
+            if train_kept == 0:
+                print(f"[WARN] Skipping client {name}: no training data after filtering")
+                if train_path.exists():
+                    train_path.unlink()
+                if val_path.exists():
+                    val_path.unlink()
+                continue
+            stats_recorder.accumulate_family_counts(sorted_labels,
+                                                    train_kept + val_kept)
+            manifest_entry = {
+                "name": name,
+                "families": sorted_labels,
+                "group_key": filter_key,
+                "group_values": sorted_labels,
+                "train_examples": train_kept,
+                "val_examples": val_kept,
+                "train_file": relative_path(train_path, output_root),
+                "val_file": relative_path(val_path, output_root),
+            }
+            if filter_key == "source" and len(sorted_labels) == 1:
+                manifest_entry["source"] = sorted_labels[0]
+            manifest_clients.append(manifest_entry)
     return manifest_clients
 
 
@@ -577,6 +741,11 @@ def main():
                         type=str,
                         default=None,
                         help="JSON or YAML file describing clients")
+    parser.add_argument("--group-by",
+                        type=str,
+                        default="family",
+                        choices=["family", "source"],
+                        help="Group clients by task family or source dataset.")
     parser.add_argument("--cache-dir",
                         type=str,
                         default=None,
@@ -653,9 +822,6 @@ def main():
     output_root = Path(args.output_dir)
     ensure_output_dir(output_root, args.overwrite)
 
-    config_path = Path(args.client_config) if args.client_config else None
-    client_cfg = load_client_config(config_path)
-
     print(f"Loading {args.dataset}:{args.split} ...")
     dataset = load_dataset(args.dataset,
                            split=args.split,
@@ -666,25 +832,41 @@ def main():
         dataset = dataset.select(range(limit))
 
     sources = sorted(set(dataset["source"]))
-    missing = [src for src in sources if src not in SOURCE_TO_FAMILY]
-    if missing:
-        raise KeyError(
-            f"Missing source->family mapping for: {missing}. Update"
-            " SOURCE_TO_FAMILY before rerunning.")
+    if args.group_by == "family":
+        missing = [src for src in sources if src not in SOURCE_TO_FAMILY]
+        if missing:
+            raise KeyError(
+                f"Missing source->family mapping for: {missing}. Update"
+                " SOURCE_TO_FAMILY before rerunning.")
 
-    dataset = dataset.map(annotate_task_family,
-                          num_proc=args.num_proc,
-                          desc="Annotating task families")
-    counts = Counter(dataset["task_family"])
-    print("Family counts:")
-    for fam, cnt in counts.items():
-        print(f"  {fam}: {cnt}")
+        dataset = dataset.map(annotate_task_family,
+                              num_proc=args.num_proc,
+                              desc="Annotating task families")
+        counts = Counter(dataset["task_family"])
+        print("Family counts:")
+        for fam, cnt in counts.items():
+            print(f"  {fam}: {cnt}")
+
+        config_path = Path(args.client_config) if args.client_config else None
+        client_cfg = load_client_config(config_path)
+        client_groups = normalize_client_specs(client_cfg["clients"], "task_family")
+    else:
+        counts = Counter(dataset["source"])
+        print("Source counts:")
+        for src, cnt in counts.items():
+            print(f"  {src}: {cnt}")
+        if args.client_config:
+            config_path = Path(args.client_config)
+            client_cfg = load_client_config(config_path)
+            client_groups = normalize_client_specs(client_cfg["clients"], "source")
+        else:
+            client_groups = build_source_groups(sources)
 
     stats_path = Path(args.stats_file) if args.stats_file else output_root / "stats.txt"
     stats_recorder = StatsRecorder(counts, stats_path)
     processor = build_sample_processor(args)
 
-    manifest_clients = prepare_clients(dataset, client_cfg["clients"], args,
+    manifest_clients = prepare_clients(dataset, client_groups, args,
                                        stats_recorder, processor)
     if not manifest_clients:
         raise RuntimeError("No client splits were produced. Check config.")
@@ -693,6 +875,7 @@ def main():
         "dataset": args.dataset,
         "split": args.split,
         "val_fraction": args.val_frac,
+        "group_by": args.group_by,
         "source_to_family": SOURCE_TO_FAMILY,
         "clients": manifest_clients,
     }

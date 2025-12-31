@@ -40,9 +40,15 @@ class LLMTrainer(GeneralTorchTrainer):
         self._unlearn_proj_dtype = 'float32'
 
     def _hook_on_fit_start_numerical_precision(self, ctx):
-        if self.cfg.train.is_enable_half:
-            if not ctx.cfg.llm.deepspeed.use:
+        precision = getattr(self.cfg.train, 'precision', None)
+        if precision is None:
+            precision = 'fp16' if self.cfg.train.is_enable_half else 'fp32'
+        precision = precision.lower()
+        if not ctx.cfg.llm.deepspeed.use:
+            if precision == 'fp16' or self.cfg.train.is_enable_half:
                 ctx.model = ctx.model.half()
+            elif precision == 'bf16':
+                ctx.model = ctx.model.to(dtype=torch.bfloat16)
 
     def _hook_on_fit_start_init(self, ctx):
         if ctx.cfg.llm.deepspeed.use:
@@ -79,13 +85,28 @@ class LLMTrainer(GeneralTorchTrainer):
         ctx.num_samples = CtxVar(0, LIFECYCLE.ROUTINE)
         ctx.ys_true = CtxVar([], LIFECYCLE.ROUTINE)
         ctx.ys_prob = CtxVar([], LIFECYCLE.ROUTINE)
+        ctx.nan_batch_count = CtxVar(0, LIFECYCLE.ROUTINE)
+        ctx.skipped_batch_count = CtxVar(0, LIFECYCLE.ROUTINE)
 
     def _hook_on_batch_forward(self, ctx):
         input_ids = ctx.data_batch['input_ids'].to(ctx.device)
         labels = ctx.data_batch['labels'].to(ctx.device)
         attention_mask = ctx.data_batch['attention_mask'].to(ctx.device)
 
-        if ctx.cfg.llm.deepspeed.use:
+        precision = getattr(ctx.cfg.train, 'precision', None)
+        if precision is None:
+            precision = 'fp16' if ctx.cfg.train.is_enable_half else 'fp32'
+        precision = precision.lower()
+        use_autocast = precision in ['bf16', 'fp16'] and not ctx.cfg.llm.deepspeed.use
+        autocast_dtype = torch.bfloat16 if precision == 'bf16' else torch.float16
+        if use_autocast:
+            with torch.autocast(device_type='cuda',
+                                dtype=autocast_dtype,
+                                enabled=str(ctx.device).startswith('cuda')):
+                outputs = ctx.model(input_ids=input_ids,
+                                    labels=labels,
+                                    attention_mask=attention_mask)
+        elif ctx.cfg.llm.deepspeed.use:
             outputs = ctx.model_engine(input_ids=input_ids,
                                        labels=labels,
                                        attention_mask=attention_mask)
@@ -99,6 +120,8 @@ class LLMTrainer(GeneralTorchTrainer):
 
         if torch.isnan(loss):
             ctx.skip_this_batch = CtxVar(True, LIFECYCLE.BATCH)
+            ctx.nan_batch_count += 1
+            ctx.skipped_batch_count += 1
             logger.warning('Skip the batch due to the loss is NaN, '
                            'it may be caused by exceeding the precision or '
                            'invalid labels.')
@@ -153,6 +176,8 @@ class LLMTrainer(GeneralTorchTrainer):
             f'{ctx.cur_split}_loss': ctx.loss_batch_total,
             f'{ctx.cur_split}_total': ctx.num_samples,
             f'{ctx.cur_split}_avg_loss': avg_loss,
+            f'{ctx.cur_split}_nan_batches': int(ctx.nan_batch_count),
+            f'{ctx.cur_split}_skipped_batches': int(ctx.skipped_batch_count),
         }
         setattr(ctx, 'eval_metrics', eval_results)
 
@@ -164,6 +189,22 @@ class LLMTrainer(GeneralTorchTrainer):
                     p.data = p.to('cpu')
                     if p.grad is not None:
                         p.grad.data = p.grad.to('cpu')
+
+        # Optionally clear optimizer/scheduler state to cap GPU memory growth
+        if ctx.cur_mode in [MODE.TRAIN, MODE.FINETUNE] and \
+                getattr(ctx.cfg.train, 'cleanup_optimizer_state',
+                        False) and not ctx.cfg.llm.deepspeed.use:
+            if hasattr(ctx, 'optimizer') and ctx.optimizer is not None:
+                try:
+                    ctx.optimizer.state.clear()
+                except Exception:
+                    ctx.optimizer.state = {}
+                ctx.optimizer = None
+            if hasattr(ctx, 'scheduler'):
+                ctx.scheduler = None
+            if getattr(ctx.cfg.train, 'cleanup_cuda_cache', False) and \
+                    torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def _hook_on_batch_forward_flop_count(self, ctx):
         """

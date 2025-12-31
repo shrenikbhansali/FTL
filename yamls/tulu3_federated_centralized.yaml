@@ -14,7 +14,7 @@ data:
   root: data/
   type: tulu3_federated
   tulu3_federated:
-    root: tulu3_federated
+    root: tulu3_federated_group
     manifest: manifest.json
     merge_clients: True
     clients:
@@ -53,10 +53,11 @@ trainer:
 train:
   local_update_steps: 30
   batch_or_epoch: batch
-  is_enable_half: True
+  is_enable_half: False
+  precision: bf16
   optimizer:
     type: Adam
-    lr: 1.0e-4
+    lr: 2.0e-5
     betas: [0.9, 0.95]
     eps: 1.0e-5
 

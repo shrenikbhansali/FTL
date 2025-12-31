@@ -88,6 +88,11 @@ def extend_data_cfg(cfg):
     cfg.data.tulu3_federated.manifest = 'manifest.json'
     cfg.data.tulu3_federated.clients = []
     cfg.data.tulu3_federated.merge_clients = False
+    cfg.data.tulu3_federated.sharding = CN()
+    cfg.data.tulu3_federated.sharding.enable = False
+    cfg.data.tulu3_federated.sharding.spec = ''
+    cfg.data.tulu3_federated.sharding.default_shards = 1
+    cfg.data.tulu3_federated.sharding.seed = 42
 
     # Configuration for prepared Tulu 3 federated splits
     cfg.data.tulu3_federated = CN()
@@ -95,6 +100,11 @@ def extend_data_cfg(cfg):
     cfg.data.tulu3_federated.manifest = 'manifest.json'
     cfg.data.tulu3_federated.clients = []
     cfg.data.tulu3_federated.merge_clients = False
+    cfg.data.tulu3_federated.sharding = CN()
+    cfg.data.tulu3_federated.sharding.enable = False
+    cfg.data.tulu3_federated.sharding.spec = ''
+    cfg.data.tulu3_federated.sharding.default_shards = 1
+    cfg.data.tulu3_federated.sharding.seed = 42
 
     # feature engineering
     cfg.feat_engr = CN()

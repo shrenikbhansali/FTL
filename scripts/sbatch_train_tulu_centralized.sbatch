@@ -10,8 +10,7 @@
 #SBATCH --mail-user=sbhansali8@gatech.edu
 
 module load anaconda3
-conda init bash >/dev/null 2>&1 || true
-source ~/.bashrc
+source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate fs-llm
 export HF_HOME=/home/hice1/sbhansali8/scratch
 export WANDB_API_KEY=78575c71e3200c01b61cae0272aef2d952ca18f9
@@ -19,4 +18,17 @@ export WANDB_ENTITY=sbhansali8-georgia-institute-of-technology
 export WANDB_PROJECT=FTL-Dev
 cd /home/hice1/sbhansali8/scratch/FederatedScope
 
-python federatedscope/main.py --cfg yamls/tulu3_federated_centralized.yaml
+EXP_NAME="centralized"
+RESULTS_ROOT="${TULU_RESULTS_DIR:-$PWD/results_tulu}"
+OUTDIR="$RESULTS_ROOT/$EXP_NAME/train"
+mkdir -p "$OUTDIR"
+
+export TMPDIR="$OUTDIR/tmp"
+export WANDB_DIR="$OUTDIR/wandb"
+mkdir -p "$TMPDIR" "$WANDB_DIR"
+unset WANDB_SERVICE
+export WANDB_DISABLE_SERVICE=1
+
+python federatedscope/main.py \
+  --cfg yamls/tulu3_federated_centralized.yaml \
+  outdir "$OUTDIR" expname "$EXP_NAME" expname_tag "${TULU_PIPE_ID:-}"

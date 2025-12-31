@@ -45,6 +45,14 @@ def extend_training_cfg(cfg):
 
     # when model is too large, users can use half-precision model
     cfg.train.is_enable_half = False
+    # numerical precision for training/eval: fp32, fp16, bf16
+    cfg.train.precision = 'fp32'
+    # torch.compile toggle (can be slow for large models)
+    cfg.train.compile = False
+    # Free optimizer/scheduler state after each local training routine
+    cfg.train.cleanup_optimizer_state = False
+    # Optionally clear CUDA allocator cache after cleanup
+    cfg.train.cleanup_cuda_cache = False
 
     # ---------------------------------------------------------------------- #
     cfg.train.unlearn = CN()

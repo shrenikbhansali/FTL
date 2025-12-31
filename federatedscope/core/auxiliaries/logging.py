@@ -163,8 +163,10 @@ def init_wandb(cfg):
     tmp_cfg.de_arguments()
     cfg_yaml = yaml.safe_load(tmp_cfg.dump())
 
-    wandb.init(project=cfg.wandb.name_project,
-               entity=cfg.wandb.name_user,
+    project = os.environ.get("WANDB_PROJECT", cfg.wandb.name_project)
+    entity = os.environ.get("WANDB_ENTITY", cfg.wandb.name_user)
+    wandb.init(project=project,
+               entity=entity,
                config=cfg_yaml,
                group=dataset_name,
                job_type=method_name,

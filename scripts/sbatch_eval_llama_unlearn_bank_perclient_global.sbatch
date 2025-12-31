@@ -15,9 +15,16 @@ CKPT="ckpts/full/llama2_composite_meta3_${TAG}.ckpt"
 HF_TYPE='meta-llama/Llama-2-7b-hf@huggingface_llm'
 FP16=False
 TASKS=("mmlu" "gsm8k" "ifeval" "humaneval")
+MMLU_MAX_SAMPLES_PER_SUBJECT=50
+DEFAULT_MAX_SAMPLES=200
 
 IDX=$SLURM_ARRAY_TASK_ID
 TASK=${TASKS[$IDX]}
+if [[ "$TASK" == "mmlu" ]]; then
+  MAX_SAMPLES=$MMLU_MAX_SAMPLES
+else
+  MAX_SAMPLES=$DEFAULT_MAX_SAMPLES
+fi
 
 module load anaconda3
 conda activate fs-llm
@@ -63,7 +70,8 @@ llm:
 train:
   is_enable_half: $FP16
 eval:
-  max_samples: 200
+  max_samples: $MAX_SAMPLES
+  max_samples_per_subject: $MMLU_MAX_SAMPLES_PER_SUBJECT
 EOF2
 
 if [[ "$TASK" == "mmlu" ]]; then

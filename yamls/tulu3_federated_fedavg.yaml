@@ -14,16 +14,9 @@ data:
   root: data/
   type: tulu3_federated
   tulu3_federated:
-    root: tulu3_federated
+    root: tulu3_federated_group
     manifest: manifest.json
-    clients:
-      - chat_client
-      - qa_client
-      - reasoning_client
-      - math_client
-      - code_client
-      - safety_client
-      - multilingual_client
+    clients: []
 
 model:
   type: "meta-llama/Llama-2-7b-hf@huggingface_llm"
@@ -52,7 +45,8 @@ trainer:
 train:
   local_update_steps: 30
   batch_or_epoch: batch
-  is_enable_half: True
+  is_enable_half: False
+  precision: bf16
   optimizer:
     type: Adam
     lr: 1.0e-4
@@ -66,8 +60,11 @@ grad:
   grad_clip: 1.0
 
 eval:
-  freq: 100
-  metrics: ["loss"]
+  freq: 100000000
+  metrics: []
+  split: []
+  report: ["raw"]
+  best_res_update_round_wise_key: "val_loss"
   count_flops: False
 
 wandb:
