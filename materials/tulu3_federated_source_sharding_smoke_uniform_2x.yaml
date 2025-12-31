@@ -1,0 +1,24 @@
+data:
+  root: data
+  type: tulu3_federated
+  tulu3_federated:
+    root: tulu3_federated_source
+    manifest: manifest.json
+    clients: []
+    sharding:
+      enable: True
+      default_shards: 2
+      spec: ""
+      seed: 42
+
+model:
+  type: "meta-llama/Llama-2-7b-hf@huggingface_llm"
+
+llm:
+  tok_len: 2048
+
+federate:
+  client_num: 1
+
+dataloader:
+  batch_size: 1

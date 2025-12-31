@@ -1,0 +1,31 @@
+data:
+  root: data
+  type: tulu3_federated
+  tulu3_federated:
+    root: tulu3_federated_group
+    manifest: manifest.json
+    clients:
+      - chat_client
+      - qa_client
+      - reasoning_client
+      - math_client
+      - code_client
+      - safety_client
+      - multilingual_client
+    sharding:
+      enable: True
+      default_shards: 1
+      spec: "chat_client=10,qa_client=4,reasoning_client=4,math_client=10,code_client=6,safety_client=2,multilingual_client=2"
+      seed: 42
+
+model:
+  type: "meta-llama/Llama-2-7b-hf@huggingface_llm"
+
+llm:
+  tok_len: 2048
+
+federate:
+  client_num: 1
+
+dataloader:
+  batch_size: 1

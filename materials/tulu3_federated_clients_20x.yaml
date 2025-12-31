@@ -1,0 +1,22 @@
+clients:
+  - name_prefix: chat_client
+    families: [chat]
+    num_shards: 20
+  - name_prefix: qa_client
+    families: [qa]
+    num_shards: 20
+  - name_prefix: reasoning_client
+    families: [reasoning]
+    num_shards: 20
+  - name_prefix: math_client
+    families: [math]
+    num_shards: 20
+  - name_prefix: code_client
+    families: [code]
+    num_shards: 20
+  - name_prefix: safety_client
+    families: [safety]
+    num_shards: 20
+  - name_prefix: multilingual_client
+    families: [multi]
+    num_shards: 20
