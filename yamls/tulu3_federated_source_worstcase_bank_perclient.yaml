@@ -4,7 +4,7 @@ seed: 42
 
 federate:
   mode: standalone
-  total_round_num: 500
+  total_round_num: 90
   client_num: 7
   share_local_model: True
   save_to: "ckpts/full/tulu3_federated_source_worstcase_bank_perclient.ckpt"
@@ -73,7 +73,7 @@ trainer:
   type: llmtrainer
 
 train:
-  local_update_steps: 30
+  local_update_steps: 50
   batch_or_epoch: batch
   is_enable_half: False
   precision: bf16

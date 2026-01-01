@@ -33,11 +33,12 @@ cd /home/hice1/sbhansali8/scratch/FederatedScope
 
 ROOT=$(pwd)
 RESULTS_ROOT="${TULU_RESULTS_DIR:-$ROOT/results_tulu}"
-RES_DIR=$RESULTS_ROOT/global/${EXP}/${TASK}/$SLURM_JOB_ID
+EVAL_JOB_ID="${SLURM_ARRAY_JOB_ID:-$SLURM_JOB_ID}"
+RES_DIR=$RESULTS_ROOT/global/${EXP}/${TASK}/$EVAL_JOB_ID
 mkdir -p "$RES_DIR"
 TMP_BASE="$ROOT/tulupipe_tmp"
 mkdir -p "$TMP_BASE"
-export TMPDIR="$TMP_BASE/${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+export TMPDIR="$TMP_BASE/${EVAL_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 export WANDB_DIR="$RES_DIR/wandb"
 mkdir -p "$TMPDIR" "$WANDB_DIR"
 unset WANDB_SERVICE

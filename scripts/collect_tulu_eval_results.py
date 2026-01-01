@@ -49,16 +49,26 @@ def _collect_results(results_root, exp, eval_job_id):
     }
 
     base_dir = Path(results_root) / "global" / exp / "{task}"
-    if eval_job_id:
-        base_dir = base_dir / eval_job_id
     benchmarks = {}
     missing = []
 
     for task in task_files:
         task_dir = Path(str(base_dir).format(task=task))
-        eval_dir = _find_eval_dir(task_dir)
+        candidates = []
+        if eval_job_id:
+            candidates.append(task_dir / eval_job_id)
+        candidates.append(task_dir)
+
+        eval_dir = None
+        for candidate in candidates:
+            eval_dir = _find_eval_dir(candidate)
+            if eval_dir is not None:
+                break
         if eval_dir is None:
-            missing.append(str(task_dir))
+            if eval_job_id:
+                missing.append(str(task_dir / eval_job_id))
+            else:
+                missing.append(str(task_dir))
             continue
         result_path = _find_task_file(eval_dir, task)
         if result_path is None:
