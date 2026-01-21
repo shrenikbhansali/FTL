@@ -4,7 +4,7 @@ seed: 42
 
 federate:
   mode: standalone
-  total_round_num: 90
+  total_round_num: 60
   client_num: 1
   share_local_model: True
   method: FedAvg

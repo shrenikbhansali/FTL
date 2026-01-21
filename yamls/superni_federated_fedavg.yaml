@@ -5,11 +5,11 @@ seed: 42
 federate:
   mode: standalone
   total_round_num: 90
-  client_num: 1
+  client_num: 0
   share_local_model: True
   method: FedAvg
   save_to: "ckpts/full/superni_federated_fedavg.ckpt"
-  sample_client_rate: 0.1
+  sample_client_rate: 0.05
 
 data:
   root: data/
@@ -49,7 +49,7 @@ trainer:
   type: llmtrainer
 
 train:
-  local_update_steps: 50
+  local_update_steps: 150
   batch_or_epoch: batch
   is_enable_half: False
   precision: bf16

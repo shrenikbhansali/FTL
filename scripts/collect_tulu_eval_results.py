@@ -14,6 +14,22 @@ def _find_task_file(task_dir, task):
         pattern = "accuracies_*__gsm8k.json"
     elif task == "humaneval":
         pattern = "accuracies_*__humaneval.json"
+    elif task == "superglue":
+        pattern = "accuracies_*__superglue.json"
+    elif task == "hellaswag":
+        pattern = "accuracies_*__hellaswag.json"
+    elif task == "piqa":
+        pattern = "accuracies_*__piqa.json"
+    elif task == "xsum":
+        pattern = "accuracies_*__xsum.json"
+    elif task == "hotpotqa":
+        pattern = "accuracies_*__hotpotqa.json"
+    elif task == "mbpp":
+        pattern = "accuracies_*__mbpp.json"
+    elif task == "apps":
+        pattern = "accuracies_*__apps.json"
+    elif task == "toolbench":
+        pattern = "accuracies_*__toolbench.json"
     else:
         pattern = "accuracies_*.json"
 
@@ -21,7 +37,16 @@ def _find_task_file(task_dir, task):
     if task == "mmlu":
         matches = [
             path for path in matches
-            if "__gsm8k" not in path.name and "__humaneval" not in path.name
+            if "__gsm8k" not in path.name
+            and "__humaneval" not in path.name
+            and "__superglue" not in path.name
+            and "__hellaswag" not in path.name
+            and "__piqa" not in path.name
+            and "__xsum" not in path.name
+            and "__hotpotqa" not in path.name
+            and "__mbpp" not in path.name
+            and "__apps" not in path.name
+            and "__toolbench" not in path.name
         ]
     if not matches:
         return None
@@ -46,6 +71,14 @@ def _collect_results(results_root, exp, eval_job_id):
         "mmlu": None,
         "gsm8k": None,
         "humaneval": None,
+        "superglue": None,
+        "hellaswag": None,
+        "piqa": None,
+        "xsum": None,
+        "hotpotqa": None,
+        "mbpp": None,
+        "apps": None,
+        "toolbench": None,
     }
 
     base_dir = Path(results_root) / "global" / exp / "{task}"
@@ -99,11 +132,54 @@ def _extract_primary_metrics(aggregate):
     if weighted is not None:
         metrics["gsm8k_weighted_accuracy"] = float(weighted)
 
+    hellaswag = benchmarks.get("hellaswag", {})
+    weighted = hellaswag.get("weighted_accuracy")
+    if weighted is not None:
+        metrics["hellaswag_weighted_accuracy"] = float(weighted)
+
+    piqa = benchmarks.get("piqa", {})
+    weighted = piqa.get("weighted_accuracy")
+    if weighted is not None:
+        metrics["piqa_weighted_accuracy"] = float(weighted)
+
+    xsum = benchmarks.get("xsum", {})
+    rouge_l = xsum.get("rougeL_f1")
+    if rouge_l is not None:
+        metrics["xsum_rougeL_f1"] = float(rouge_l)
+
+    hotpotqa = benchmarks.get("hotpotqa", {})
+    em = hotpotqa.get("em")
+    f1 = hotpotqa.get("f1")
+    if em is not None:
+        metrics["hotpotqa_em"] = float(em)
+    if f1 is not None:
+        metrics["hotpotqa_f1"] = float(f1)
+
+    mbpp = benchmarks.get("mbpp", {})
+    pass_at_1 = mbpp.get("pass@1")
+    if pass_at_1 is not None:
+        metrics["mbpp_pass_at_1"] = float(pass_at_1)
+
+    apps = benchmarks.get("apps", {})
+    pass_at_1 = apps.get("pass@1")
+    if pass_at_1 is not None:
+        metrics["apps_pass_at_1"] = float(pass_at_1)
+
+    toolbench = benchmarks.get("toolbench", {})
+    score = toolbench.get("score")
+    if score is not None:
+        metrics["toolbench_score"] = float(score)
+
     humaneval = benchmarks.get("humaneval", {})
     for key in ("pass@1", "pass@5", "pass@10"):
         if key in humaneval:
             metrics["humaneval_pass"] = float(humaneval[key])
             break
+
+    superglue = benchmarks.get("superglue", {})
+    weighted = superglue.get("weighted_accuracy")
+    if weighted is not None:
+        metrics["superglue_weighted_accuracy"] = float(weighted)
 
     return metrics
 
@@ -138,6 +214,65 @@ def _flatten_wandb_metrics(aggregate):
         for key, val in humaneval.items():
             if key.startswith("pass@"):
                 metrics[f"benchmarks/humaneval/{key}"] = val
+
+    superglue = benchmarks.get("superglue", {})
+    if superglue:
+        weighted = superglue.get("weighted_accuracy")
+        if weighted is not None:
+            metrics["benchmarks/superglue/weighted_accuracy"] = weighted
+        for task, val in superglue.get("categories", {}).items():
+            metrics[f"benchmarks/superglue/tasks/{task}"] = val
+
+    hellaswag = benchmarks.get("hellaswag", {})
+    if hellaswag:
+        weighted = hellaswag.get("weighted_accuracy")
+        if weighted is not None:
+            metrics["benchmarks/hellaswag/weighted_accuracy"] = weighted
+
+    piqa = benchmarks.get("piqa", {})
+    if piqa:
+        weighted = piqa.get("weighted_accuracy")
+        if weighted is not None:
+            metrics["benchmarks/piqa/weighted_accuracy"] = weighted
+
+    xsum = benchmarks.get("xsum", {})
+    if xsum:
+        rouge_l = xsum.get("rougeL_f1")
+        if rouge_l is not None:
+            metrics["benchmarks/xsum/rougeL_f1"] = rouge_l
+        rouge_l_prec = xsum.get("rougeL_precision")
+        if rouge_l_prec is not None:
+            metrics["benchmarks/xsum/rougeL_precision"] = rouge_l_prec
+        rouge_l_rec = xsum.get("rougeL_recall")
+        if rouge_l_rec is not None:
+            metrics["benchmarks/xsum/rougeL_recall"] = rouge_l_rec
+
+    hotpotqa = benchmarks.get("hotpotqa", {})
+    if hotpotqa:
+        em = hotpotqa.get("em")
+        f1 = hotpotqa.get("f1")
+        if em is not None:
+            metrics["benchmarks/hotpotqa/em"] = em
+        if f1 is not None:
+            metrics["benchmarks/hotpotqa/f1"] = f1
+
+    mbpp = benchmarks.get("mbpp", {})
+    if mbpp:
+        for key, val in mbpp.items():
+            if key.startswith("pass@"):
+                metrics[f"benchmarks/mbpp/{key}"] = val
+
+    apps = benchmarks.get("apps", {})
+    if apps:
+        for key, val in apps.items():
+            if key.startswith("pass@"):
+                metrics[f"benchmarks/apps/{key}"] = val
+
+    toolbench = benchmarks.get("toolbench", {})
+    if toolbench:
+        score = toolbench.get("score")
+        if score is not None:
+            metrics["benchmarks/toolbench/score"] = score
 
     if aggregate.get("missing"):
         metrics["benchmarks/missing_count"] = len(aggregate["missing"])

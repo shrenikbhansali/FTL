@@ -4,12 +4,12 @@ seed: 42
 
 federate:
   mode: standalone
-  total_round_num: 90
-  client_num: 1
+  total_round_num: 60
+  client_num: 0
   share_local_model: True
   method: FedAvg
   save_to: "ckpts/full/p3_federated_fedavg.ckpt"
-  sample_client_rate: 0.1
+  sample_client_rate: 0.04
 
 data:
   root: data/
@@ -49,7 +49,7 @@ trainer:
   type: llmtrainer
 
 train:
-  local_update_steps: 50
+  local_update_steps: 200
   batch_or_epoch: batch
   is_enable_half: False
   precision: bf16
@@ -57,7 +57,7 @@ train:
   cleanup_cuda_cache: True
   optimizer:
     type: Adam
-    lr: 1.0e-4
+    lr: 2.0e-4
     betas: [0.9, 0.95]
     eps: 1.0e-5
 
