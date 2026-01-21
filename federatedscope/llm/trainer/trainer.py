@@ -38,6 +38,7 @@ class LLMTrainer(GeneralTorchTrainer):
         self._unlearn_round = 0
         self._proj_strength = 1.0
         self._unlearn_proj_dtype = 'float32'
+        self._leakage_stats = None
 
     def _hook_on_fit_start_numerical_precision(self, ctx):
         precision = getattr(self.cfg.train, 'precision', None)
@@ -87,6 +88,17 @@ class LLMTrainer(GeneralTorchTrainer):
         ctx.ys_prob = CtxVar([], LIFECYCLE.ROUTINE)
         ctx.nan_batch_count = CtxVar(0, LIFECYCLE.ROUTINE)
         ctx.skipped_batch_count = CtxVar(0, LIFECYCLE.ROUTINE)
+        if ctx.cur_mode in [MODE.TRAIN, MODE.FINETUNE] and \
+                getattr(self.cfg.train.unlearn, 'log_leakage', False):
+            self._leakage_stats = {
+                'pre': 0.0,
+                'post': 0.0,
+                'denom': 0.0,
+                'count': 0,
+                'failed': False,
+            }
+        else:
+            self._leakage_stats = None
 
     def _hook_on_batch_forward(self, ctx):
         input_ids = ctx.data_batch['input_ids'].to(ctx.device)
@@ -205,6 +217,7 @@ class LLMTrainer(GeneralTorchTrainer):
             if getattr(ctx.cfg.train, 'cleanup_cuda_cache', False) and \
                     torch.cuda.is_available():
                 torch.cuda.empty_cache()
+        self._log_leakage_stats(ctx)
 
     def _hook_on_batch_forward_flop_count(self, ctx):
         """
@@ -314,6 +327,7 @@ class LLMTrainer(GeneralTorchTrainer):
             return
         if not self._unlearn_bases:
             return
+        log_leakage = getattr(self.cfg.train.unlearn, 'log_leakage', False)
         strength = getattr(self, '_proj_strength', 1.0)
         rho = getattr(self.cfg.train.unlearn, 'proj_rho', 1.0)
         try:
@@ -341,8 +355,12 @@ class LLMTrainer(GeneralTorchTrainer):
                     continue
                 Q = basis.to(device=device, dtype=proj_dtype)
                 grad_fp = param.grad.data.to(dtype=proj_dtype)
-                projection = (grad_fp @ Q) @ Q.transpose(0, 1)
+                proj_coeff = grad_fp @ Q
+                projection = proj_coeff @ Q.transpose(0, 1)
                 adjusted = grad_fp - strength * projection
+                if log_leakage and self._leakage_stats is not None:
+                    self._update_leakage_stats(grad_fp, proj_coeff, Q,
+                                               adjusted)
                 param.grad.data = adjusted.to(dtype=param.grad.dtype)
 
     def _parse_unlearn_payload(self, payload):
@@ -388,6 +406,72 @@ class LLMTrainer(GeneralTorchTrainer):
             'bfloat16': torch.bfloat16,
         }
         return mapping.get(name.lower(), torch.float32)
+
+    def _update_leakage_stats(self, grad_fp, proj_coeff, Q, adjusted):
+        stats = self._leakage_stats
+        if not stats or stats.get('failed', False):
+            return
+        try:
+            denom = torch.sum(grad_fp * grad_fp)
+            pre = torch.sum(proj_coeff * proj_coeff)
+            post_coeff = adjusted @ Q
+            post = torch.sum(post_coeff * post_coeff)
+            if not torch.isfinite(denom + pre + post):
+                stats['failed'] = True
+                return
+            denom_val = float(denom.item())
+            if denom_val <= 0.0:
+                return
+            stats['denom'] += denom_val
+            stats['pre'] += float(pre.item())
+            stats['post'] += float(post.item())
+            stats['count'] += 1
+        except Exception:
+            stats['failed'] = True
+
+    def _log_leakage_stats(self, ctx):
+        if not getattr(self.cfg.train.unlearn, 'log_leakage', False):
+            return
+        if ctx.cur_mode not in [MODE.TRAIN, MODE.FINETUNE]:
+            return
+        stats = self._leakage_stats or {}
+        failed = bool(stats.get('failed', False))
+        denom = float(stats.get('denom', 0.0))
+        count = int(stats.get('count', 0))
+        if failed or denom <= 0.0 or count == 0:
+            leakage_pre = 0.0
+            leakage_post = 0.0
+            leakage_ratio = 0.0
+        else:
+            leakage_pre = stats.get('pre', 0.0) / denom
+            leakage_post = stats.get('post', 0.0) / denom
+            if leakage_pre <= 0.0:
+                leakage_ratio = 0.0
+            else:
+                leakage_ratio = leakage_post / leakage_pre
+
+        if getattr(self.cfg, 'wandb', None) and self.cfg.wandb.use:
+            try:
+                import wandb
+                payload = {
+                    'unlearn_bank/leakage_pre': leakage_pre,
+                    'unlearn_bank/leakage_post': leakage_post,
+                    'unlearn_bank/leakage_ratio': leakage_ratio,
+                }
+                step = getattr(self, '_unlearn_round', None)
+                wandb.log(payload, step=step)
+            except ImportError:
+                logger.warning(
+                    "cfg.wandb.use=True but wandb is not installed; "
+                    "skip logging leakage stats to wandb.")
+            except Exception as exc:
+                logger.warning("Failed to log leakage stats to wandb: %s",
+                               exc)
+
+        logger.info(
+            '[UNLEARN][bank][leakage] pre=%.6f post=%.6f ratio=%.6f failed=%s',
+            leakage_pre, leakage_post, leakage_ratio, failed)
+        self._leakage_stats = None
 
 
 def call_llm_trainer(trainer_type):

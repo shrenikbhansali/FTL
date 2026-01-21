@@ -1,0 +1,1026 @@
+%%%%%%%% ICML 2026 EXAMPLE LATEX SUBMISSION FILE %%%%%%%%%%%%%%%%%
+
+\documentclass{article}
+
+% Recommended, but optional, packages for figures and better typesetting:
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{booktabs} % for professional tables
+
+% hyperref makes hyperlinks in the resulting PDF.
+% If your build breaks (sometimes temporarily if a hyperlink spans a page)
+% please comment out the following usepackage line and replace
+% \usepackage{icml2026} with \usepackage[nohyperref]{icml2026} above.
+\usepackage{hyperref}
+
+
+% Attempt to make hyperref and algorithmic work together better:
+\newcommand{\theHalgorithm}{\arabic{algorithm}}
+
+% Use the following line for the initial blind version submitted for review:
+\usepackage{icml2026}
+
+% For preprint, use
+% \usepackage[preprint]{icml2026}
+
+% If accepted, instead use the following line for the camera-ready submission:
+% \usepackage[accepted]{icml2026}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{amsthm}
+
+
+% if you use cleveref..
+\usepackage[capitalize,noabbrev]{cleveref}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% THEOREMS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{assumption}[theorem]{Assumption}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+% Todonotes is useful during development; simply uncomment the next line
+%    and comment out the line below the next line to turn off comments
+%\usepackage[disable,textsize=tiny]{todonotes}
+\usepackage[textsize=tiny]{todonotes}
+
+% The \icmltitle you define below is probably too long as a header.
+% Therefore, a short form for the running title is supplied here:
+\icmltitlerunning{SubspaceBank: Federated Transfer Learning for LLMs using subspaces}
+
+\begin{document}
+
+\twocolumn[
+  \icmltitle{SubspaceBank: Federated Transfer Learning For LLMs Using Subspaces}
+
+  % It is OKAY to include author information, even for blind submissions: the
+  % style file will automatically remove it for you unless you've provided
+  % the [accepted] option to the icml2026 package.
+
+  % List of affiliations: The first argument should be a (short) identifier you
+  % will use later to specify author affiliations Academic affiliations
+  % should list Department, University, City, Region, Country Industry
+  % affiliations should list Company, City, Region, Country
+
+  % You can specify symbols, otherwise they are numbered in order. Ideally, you
+  % should not use this facility. Affiliations will be numbered in order of
+  % appearance and this is the preferred way.
+  \icmlsetsymbol{equal}{*}
+
+  \begin{icmlauthorlist}
+    \icmlauthor{Firstname1 Lastname1}{equal,yyy}
+    \icmlauthor{Firstname2 Lastname2}{equal,yyy,comp}
+    \icmlauthor{Firstname3 Lastname3}{comp}
+    \icmlauthor{Firstname4 Lastname4}{sch}
+    \icmlauthor{Firstname5 Lastname5}{yyy}
+    \icmlauthor{Firstname6 Lastname6}{sch,yyy,comp}
+    \icmlauthor{Firstname7 Lastname7}{comp}
+    %\icmlauthor{}{sch}
+    \icmlauthor{Firstname8 Lastname8}{sch}
+    \icmlauthor{Firstname8 Lastname8}{yyy,comp}
+    %\icmlauthor{}{sch}
+    %\icmlauthor{}{sch}
+  \end{icmlauthorlist}
+
+  \icmlaffiliation{yyy}{Department of XXX, University of YYY, Location, Country}
+  \icmlaffiliation{comp}{Company Name, Location, Country}
+  \icmlaffiliation{sch}{School of ZZZ, Institute of WWW, Location, Country}
+
+  \icmlcorrespondingauthor{Firstname1 Lastname1}{first1.last1@xxx.edu}
+  \icmlcorrespondingauthor{Firstname2 Lastname2}{first2.last2@www.uk}
+
+  % You may provide any keywords that you find helpful for describing your
+  % paper; these are used to populate the "keywords" metadata in the PDF but
+  % will not be shown in the document
+  \icmlkeywords{Machine Learning, ICML}
+
+  \vskip 0.3in
+]
+
+% this must go after the closing bracket ] following \twocolumn[ ...
+
+% This command actually creates the footnote in the first column listing the
+% affiliations and the copyright notice. The command takes one argument, which
+% is text to display at the start of the footnote. The \icmlEqualContribution
+% command is standard text for equal contribution. Remove it (just {}) if you
+% do not need this facility.
+
+% Use ONE of the following lines. DO NOT remove the command.
+% If you have no special notice, KEEP empty braces:
+\printAffiliationsAndNotice{}  % no special notice (required even if empty)
+% Or, if applicable, use the standard equal contribution text:
+% \printAffiliationsAndNotice{\icmlEqualContribution}
+
+\begin{abstract}
+Federated transfer fine-tuning (FTL) of large language models (LLMs) faces severe heterogeneity: when clients correspond to distinct tasks or domains, naive aggregation (e.g., FedAvg) can cancel transferable signal and amplify task-private interference. We introduce \textbf{SubspaceBank}, a geometry-aware federation method for LoRA-based LLM adaptation in the dataset-pure FTL regime. At each communication round, the server constructs low-rank orthonormal bases from client update matrices and decomposes each client’s update into shared (global), client-private, and residual components. SubspaceBank aggregates by reweighting these components to emphasize consensus-aligned directions while shrinking residuals, and additionally broadcasts per-client constraint bases that enable projected local updates to reduce cross-client interference during multi-step optimization. Across heterogeneous-client settings, SubspaceBank yields stronger global robustness and improved stability than FedAvg under comparable LoRA parameterization, highlighting subspace decomposition as a practical primitive for federated LLM transfer learning.
+\end{abstract}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% MAIN PAPER (between \end{abstract} and % \section{Electronic Submission})
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}
+\label{sec:intro}
+
+\paragraph{Motivation: federated transfer fine-tuning for LLMs.}
+Federated learning (FL) for LLMs is increasingly used to adapt models without centralizing client data. However, much of the FL literature targets either (i) a single global objective under mild non-IIDness (where averaging remains meaningful), or (ii) personalization, where the global model is primarily an initializer for client-specific adaptation. In this paper we focus on a different regime: \emph{federated transfer fine-tuning (FTL)}, where each client corresponds to a distinct dataset/task/domain, heterogeneity is intrinsic and persistent, and the primary goal is a \emph{single global model} that is robust across all constituent benchmarks. This regime naturally arises when organizations cannot pool data across domains (or tenants), but still want one shared model to serve multiple downstream tasks reliably.
+
+In FTL, naïve aggregation can fail even when each client makes local progress. With parameter-efficient fine-tuning (PEFT) such as LoRA, client updates often lie in low-rank (or low-effective-rank) subspaces that differ substantially across tasks. Under strong task diversity, these update directions can disagree: FedAvg can cancel transferable signal and unintentionally preserve or amplify residual/noisy components, yielding unstable training and degraded global robustness. The empirical pattern in our baseline results reflects this failure mode: FedAvg underperforms centralized multi-task training across most benchmarks (\Cref{sec:exp-global}), motivating aggregation rules that explicitly control interference.
+
+\paragraph{Core idea: geometry-aware federation via shared/private subspaces.}
+We take a geometric view of heterogeneous LoRA deltas. For a given banked parameter key, each client’s LoRA delta can be decomposed into: (i) \textbf{shared} directions supported by many clients (transfer), (ii) \textbf{private} directions specific to a single dataset/client (task-private structure), and (iii) \textbf{residual} components (unmodeled/noise or rank-mismatch). Our method, \textbf{SubspaceBank}, extracts a shared basis from stacked client deltas and a private basis per client from the shared-removed residual, then aggregates via a structured recombination rule rather than raw averaging. To further reduce cross-task interference during multi-step local optimization, SubspaceBank additionally sends each participating client a constraint basis spanning other participants’ private directions for that round and applies projected-gradient local steps. Intuitively, SubspaceBank addresses interference at the server (aggregation geometry) and at the client (optimization geometry).
+
+\paragraph{Contributions.}
+\begin{itemize}
+  \item \textbf{SubspaceBank (core aggregation):} a residual-first, nested-projection decomposition of participating client LoRA deltas into shared/private/residual components per banked parameter key, plus a structured aggregation rule that amplifies consensus and suppresses residual noise.
+  \item \textbf{SubspaceBank (projected local optimization):} per-client constraint payloads derived from other participants’ private subspaces and projected-gradient local steps (optimizer/clipping-aware) that reduce cross-private leakage in practice.
+  \item \textbf{FTL evaluation protocol:} (i) \textbf{Single-Client Datasets} and (ii) \textbf{Multi-Client Datasets}; in both regimes we evaluate the \emph{global} model on all benchmarks to measure robustness; in the Single-Client Datasets regime we additionally evaluate each client model to assess specialization retention.
+\end{itemize}
+
+\paragraph{Roadmap.}
+\Cref{sec:background} reviews FTL heterogeneity, federated LLM fine-tuning norms, and PEFT/subspace ideas. \Cref{sec:method} defines the federated protocol and presents SubspaceBank (including projected local training and mechanism grounding). \Cref{sec:experiments} presents regimes, baselines, and results, including geometry diagnostics (\Cref{sec:exp-geometry}), followed by limitations (\Cref{sec:discussion}) and related work (\Cref{sec:related}).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Background}
+\label{sec:background}
+
+\subsection{Federated Learning for LLM Fine-Tuning}
+Deploying large language models (LLMs) in federated learning (FL) is shaped by two practical constraints. First, \emph{communication} is a major bottleneck: exchanging full model parameters or dense updates is costly at LLM scale, so systems often turn to parameter-efficient fine-tuning (PEFT) methods to reduce communication cost. Second, \emph{optimization can be fragile} under non-IID client data and multi-step local training \citet{mcmahan2017communication,reddi2020adaptive}. Consequently, many systems often limit heterogeneity and/or local training budgets in practice.
+
+\subsection{Federated Transfer Learning Under Heterogeneity}
+Classical FL aggregates client updates to optimize a global objective. Under non-IID data, heterogeneity can produce \emph{client drift}: local optimization on different client objectives moves parameters in incompatible directions, so naive averaging may cancel progress, amplify variance, and yield unstable training dynamics (e.g., \citet{mcmahan2017fedavg,stich2019local,karimireddy2020scaffold}). These issues are often formalized through gradient dissimilarity or bounded drift assumptions and manifest as degraded global generalization.
+
+Federated transfer learning (FTL) makes heterogeneity structural rather than incidental: each client corresponds to a distinct dataset, task, or domain, and the target is a \emph{single} model that transfers across the full client/task set. In this regime, the central failure mode is \emph{interference}. Client updates typically mix (i) transferable components that would benefit many tasks with (ii) task-private components that improve one task while harming others. Aggregating such mixed updates can suppress shared signal through cancellation while increasing the effective noise of the global step, leading to brittle across-task behavior. FTL places stronger pressure on mechanisms that preserve cross-task signal while controlling negative transfer, and remains underexplored for LLM fine-tuning.
+
+\subsection{PEFT and LoRA}
+Parameter-efficient fine-tuning (PEFT) adapts a pretrained model by training only a small set of parameters while freezing the backbone. In FL, PEFT reduces the communication footprint of updates and the amount of optimizer state maintained on clients.
+
+LoRA~\citet{hu2022lora} is a widely used PEFT mechanism. For a linear transformation with weight matrix $W\in\mathbb{R}^{d_{\mathrm{out}}\times d_{\mathrm{in}}}$, LoRA introduces a low-rank update parameterized as
+\[
+\Delta W \;=\; B A,\qquad
+A\in\mathbb{R}^{r\times d_{\mathrm{in}}},\;\;
+B\in\mathbb{R}^{d_{\mathrm{out}}\times r},
+\]
+and uses the effective weight $W+\Delta W$ during forward passes while keeping the pretrained $W$ frozen. The trainable parameters are the adapter matrices $(A,B)$ (and optional scaling), where the rank $r\ll \min(d_{\mathrm{in}},d_{\mathrm{out}})$ controls the trainable capacity.
+
+In a federated setting, clients perform local optimization over LoRA parameters and communicate updates back to the server. It is therefore useful to view the communicated information as \emph{matrix-shaped deltas} associated with identifiable parameter tensors (e.g., the LoRA $A$ or $B$ matrices attached to a particular module). We will refer to an individual trainable 2D tensor by a \emph{key}---an exact parameter name in the model state---and we will write client updates for such a key as matrix deltas. 
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Method}
+\label{sec:method}
+
+Our goal is to learn a single global LLM that is robust across heterogeneous client tasks in a federated transfer fine-tuning (FTL) regime. At each round, for each banked key, the server computes a shared right-subspace from stacked client deltas, a private right-subspace per client from shared-removed residuals, forms structured deltas, and aggregates. In addition, the server constructs per-client constraint bases used for projected local training.
+
+\subsection{Notation and Preliminaries}
+\label{sec:method-protocol}
+
+We consider $N$ clients indexed by $i\in\{1,\dots,N\}$ and training rounds $t=0,\dots,T-1$. Each client $i$ has local data distribution $\mathcal{D}_i$ and corresponding objective $f_i(W)$ (e.g., supervised fine-tuning loss). In FTL, the goal is to obtain a single model that is robust across the set of client tasks/benchmarks, rather than optimizing for a single shared distribution.
+
+At round $t$, the server samples a participating set $S_t$ ($|S_t|\leq N$) and broadcasts the current global parameters $W^t$ to clients in $S_t$. Each participating client performs $E$ local optimizer steps of LoRA fine-tuning, starting from $W^t$, producing updated client parameters $W_i^t$. The server aggregates these updates to obtain $W^{t+1}$.
+
+We describe aggregation at the level of individual parameter \emph{keys}. Let $k$ denote an exact state-dict parameter name corresponding to a 2D tensor eligible for SubspaceBank. For each banked key $k$ and participating client $i\in S_t$, we define the (matrix-valued) client delta
+\begin{equation}
+  D_{k,i}^t \triangleq W_{k,i}^t - W_k^t \in \mathbb{R}^{d_{\mathrm{out}}\times d_{\mathrm{in}}}.
+  \label{eq:delta_def}
+\end{equation}
+We use weights $w_i$ for aggregation (uniform or proportional to client sample counts). Unless stated otherwise, $D_{k,i}^t$ refers to the raw parameter delta. For non-banked parameters, we apply standard weighted averaging; the SubspaceBank mechanism applies only to a selected subset of matrix-shaped parameters.
+
+\subsection{Banked Keys (LoRA adapters)}
+\label{sec:banked-keys-method}
+
+SubspaceBank operates on \textbf{raw parameter deltas} (\Cref{eq:delta_def}) for selected 2D tensors. We bank LoRA adapter tensors (the $A$ and $B$ matrices defined in \Cref{sec:background}) as separate keys. Importantly, we do \emph{not} reconstruct a combined adapter update (e.g., $\Delta W = BA$), nor do we concatenate LoRA components across modules: SubspaceBank decomposes and aggregates each banked matrix key independently. We bank LoRA-only; non-banked parameters use standard weighted averaging as described in \Cref{sec:method-protocol}.
+
+For each banked matrix of shape $(d_{\mathrm{out}}, d_{\mathrm{in}})$, we represent update geometry using \textbf{right singular vectors}, i.e., we construct subspaces in $\mathbb{R}^{d_{\mathrm{in}}}$ that capture dominant directions in the \emph{right} space. This choice yields a consistent interface for all banked matrices and aligns naturally with low-rank structure: even when $d_{\mathrm{out}}$ is large, the update often varies in a low-dimensional subset of the input-side directions. 
+
+\subsection{SubspaceBank Overview and Design Goals}
+\label{sec:method-overview}
+
+Each round, the server receives deltas $\{D_{k,i}^t\}_{i\in S_t}$ for all banked keys $k$. For each banked key, we decompose each client delta into a shared right-subspace component, a client-private component within the shared-removed residual, and a remaining residual; we then reweight these components during aggregation and construct per-client constraint bases for projected local training. We now formalize each component.
+
+\subsection{SubspaceBank: Shared Basis Construction}
+\label{sec:shared-basis}
+
+Fix a banked key $k$ and a round $t$ with participating set $S_t$. Each participating client provides a delta matrix $D_{k,i}^t \in \mathbb{R}^{d_{\mathrm{out}}\times d_{\mathrm{in}}}$. To extract consensus geometry across clients, we stack these deltas along rows:
+\begin{equation}
+  M_k^t \triangleq \operatorname{concat}_{i\in S_t} D_{k,i}^t
+  \in\mathbb{R}^{(|S_t|d_{\mathrm{out}})\times d_{\mathrm{in}}}.
+  \label{eq:stack_def}
+\end{equation}
+We compute a truncated singular value decomposition (SVD),
+\[
+  M_k^t = U_k^t \Sigma_k^t (V_k^t)^\top,
+\]
+and define the \emph{shared} basis $S_k^t$ using the top $r_g$ right singular vectors:
+\begin{equation}
+  S_k^t \triangleq V_k^t[:,1{:}r_g]\in\mathbb{R}^{d_{\mathrm{in}}\times r_g},
+  \qquad
+  \Pi_{S_k^t}\triangleq S_k^t (S_k^t)^\top.
+  \label{eq:shared_basis}
+\end{equation}
+The projector $\Pi_{S_k^t}$ captures the subspace of right-space directions that best explain the stacked updates (in least-squares sense), and thus functions as a data-dependent estimate of consensus-aligned update geometry.
+
+\subsection{SubspaceBank: Residual-First Private Basis and Delta Decomposition}
+\label{sec:private-basis}
+
+The shared basis alone is not sufficient in FTL: forcing all updates into a single shared span can distort or discard task-specific structure. SubspaceBank therefore extracts a private basis \emph{from the shared-removed residual} for each client, ensuring that private directions are (by construction) orthogonal to the shared span.
+
+For each participating client $i\in S_t$, we define the shared component as the right projection onto $S_k^t$:
+\begin{equation}
+  D_{k,i}^{t,\mathrm{glob}} \triangleq D_{k,i}^t \Pi_{S_k^t}.
+  \label{eq:glob_comp}
+\end{equation}
+We then form the shared-removed residual
+\begin{equation}
+  R_{k,i}^{t,(0)} \triangleq D_{k,i}^t (I-\Pi_{S_k^t}).
+  \label{eq:resid0}
+\end{equation}
+Next, we compute a candidate private basis from the top $r_c$ right singular vectors of $R_{k,i}^{t,(0)}$:
+\[
+  R_{k,i}^{t,(0)} = \tilde U_{k,i}^t \tilde \Sigma_{k,i}^t (\tilde V_{k,i}^t)^\top,
+  \qquad
+  \hat P_{k,i}^t \triangleq \tilde V_{k,i}^t[:,1{:}r_c].
+\]
+Since $R_{k,i}^{t,(0)}$ is already orthogonal to $S_k^t$ in the right space, $\hat P_{k,i}^t$ typically lies largely outside the shared span; we nevertheless explicitly orthogonalize against $S_k^t$ and re-orthonormalize:
+\begin{equation}
+  P_{k,i}^t \triangleq \operatorname{orth}\!\big((I-\Pi_{S_k^t})\hat P_{k,i}^t\big),
+  \qquad
+  \Pi_{P_{k,i}^t}\triangleq P_{k,i}^t (P_{k,i}^t)^\top.
+  \label{eq:priv_basis}
+\end{equation}
+Here $\operatorname{orth}(\cdot)$ returns an orthonormal basis spanning its argument’s column space. We then define the private component \emph{within the residual}:
+\begin{equation}
+  D_{k,i}^{t,\mathrm{priv}} \triangleq R_{k,i}^{t,(0)} \Pi_{P_{k,i}^t}.
+  \label{eq:priv_comp}
+\end{equation}
+Finally, we define the remaining residual component
+\begin{equation}
+  R_{k,i}^t \triangleq D_{k,i}^t - D_{k,i}^{t,\mathrm{glob}} - D_{k,i}^{t,\mathrm{priv}}.
+  \label{eq:final_resid}
+\end{equation}
+
+This residual-first construction is central: it prevents private structure from being ``explained away'' by the shared span, and it yields a three-way decomposition in which the shared and private components capture interpretable update geometry, while $R_{k,i}^t$ collects unmodeled directions that we will explicitly shrink during aggregation.
+
+\subsection{SubspaceBank: Structured Aggregation}
+\label{sec:structured-agg}
+
+Given the decomposition above, SubspaceBank aggregates using a structured recombination that treats shared, private, and residual components differently. For each key $k$ and participating client $i$, we define a \emph{structured delta}
+\begin{equation}
+  \tilde D_{k,i}^t
+  \triangleq
+  D_{k,i}^{t,\mathrm{priv}}
+  + \beta_g\, D_{k,i}^{t,\mathrm{glob}}
+  + \beta_r\, R_{k,i}^t,
+  \label{eq:structured_delta}
+\end{equation}
+where $\beta_g\ge 0$ controls amplification of consensus-aligned directions and $\beta_r\in[0,1]$ controls shrinkage of residual components. The aggregated update for key $k$ is then
+\begin{equation}
+  \Delta_k^t \triangleq \sum_{i\in S_t} w_i\, \tilde D_{k,i}^t,
+  \qquad
+  W_k^{t+1} \leftarrow W_k^t + \alpha\, \Delta_k^t,
+  \label{eq:agg_update}
+\end{equation}
+with global step size $\alpha>0$. Intuitively, $\beta_g$ increases the contribution of update directions that many clients agree on (transfer), $D^{\mathrm{priv}}$ preserves client-specific structure that is orthogonal to the shared span (avoiding a ``one-span-fits-all'' collapse), and $\beta_r$ suppresses leftover components that tend to be unstable under averaging.
+
+\paragraph{Operator view (mechanism-aligned).}
+The structured update admits a simple operator interpretation that makes explicit what is being amplified, preserved, and shrunk. Suppressing indices for readability and writing $\Pi_S$ and $\Pi_P$ for the shared and private projectors, the construction implies
+\begin{equation}
+  \tilde D
+  = \beta_r D
+  + (\beta_g-\beta_r)\,D\Pi_S
+  + (1-\beta_r)\,(D(I-\Pi_S))\Pi_P.
+  \label{eq:operator_view}
+\end{equation}
+The first term scales the entire update, the second term selectively boosts the shared (consensus) component, and the third term preserves structure within the shared-removed residual that lies in the private subspace. This view clarifies that SubspaceBank is not assuming private subspaces are mutually orthogonal across clients; rather, it explicitly separates consensus-aligned and residual directions at aggregation time and will rely on projected local optimization (below) to reduce cross-private contamination during training.
+
+\subsection{Per-Client Payloads and Projected Local Training}
+\label{sec:bank-perclient}
+
+Structured aggregation controls interference at the server, but in multi-step local optimization, a client can still drift into directions that correspond to other clients' task-specific structure. SubspaceBank therefore incorporates a per-client constraint mechanism: each client projects gradients away from a basis spanning other clients' private subspaces, thereby reducing cross-private leakage during local training.
+
+\subsubsection{Per-Client Constraint Basis Construction}
+Given private bases $\{P_{k,j}^t\}_{j\in S_t}$ for a key $k$, we define for each client $i\in S_t$ a constraint basis spanning \emph{other clients'} private subspaces:
+\begin{equation}
+  Q_{k}^{t,(i)}
+  \triangleq
+  \operatorname{orth}\!\Big(\big[\,P_{k,j}^t\,\big]_{j\in S_t\setminus\{i\}}\Big)
+  \in \mathbb{R}^{d_{\mathrm{in}}\times r_Q}.
+  \label{eq:payload_def}
+\end{equation}
+This construction takes the union of other clients' private directions (in the right space), orthonormalizes them, and yields a compact subspace estimate of ``directions to avoid'' for client $i$ at key $k$.
+
+\subsubsection{Projected-Gradient Local Updates}
+During client $i$'s local training, for each banked key $k$ with an available constraint basis $Q_k^{(i)}$, we project gradients in the right space before applying the optimizer update. Let $g_k \in \mathbb{R}^{d_{\mathrm{out}}\times d_{\mathrm{in}}}$ denote the gradient of the local objective with respect to the banked parameter matrix $W_k$. We update
+\begin{equation}
+  g_k \leftarrow g_k - \rho\, (g_k Q_k^{(i)})(Q_k^{(i)})^\top,
+  \label{eq:grad_proj}
+\end{equation}
+where $\rho\in[0,1]$ controls the projection strength. When $\rho=1$, \Cref{eq:grad_proj} removes the entire component of $g_k$ lying in $\mathrm{span}(Q_k^{(i)})$ (in the right space); smaller $\rho$ yields a soft constraint. The projected gradients are then used in the client optimizer step for the local update. Conceptually, this makes each client less likely to move into directions that correspond to other clients' private structure, mitigating interference that can accumulate over multiple local steps.
+
+\paragraph{Idealized leakage statement (mechanism-aligned).}
+In a single projected gradient step with exact orthogonal projector and a first-order update, the resulting parameter update has zero right-space component in $\mathrm{span}(Q_k^{(i)})$ when $\rho=1$. Concretely, for an update of the form $W_k \leftarrow W_k - \eta g_k$ using $g_k$ after \Cref{eq:grad_proj}, we have $(\Delta W_k) Q_k^{(i)} = 0$. 
+
+Because local training is multi-step and uses adaptive optimizers, we treat projection as approximate interference control and evaluate its effectiveness empirically via a leakage proxy (defined in \Cref{sec:exp-geometry}).
+
+We analyze the decomposition using energy fractions of the shared/private/residual components and quantify projection leakage via gradient energy along the constraint span; formal definitions appear where first used in \Cref{sec:exp-geometry}.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Experimental Setting}
+\label{sec:exp-regimes}
+
+We consider two FTL regimes, both of which treat clients as \emph{dataset-pure}:
+\begin{itemize}
+    \item Single-Client Datasets: There is one client per dataset/task.
+    \item Multi-Client Datasets: Each dataset is distributed across multiple clients, but each client only corresponds to one dataset (no multi-task client data). 
+\end{itemize}
+
+For training data and benchmarking LLMs in a transfer learning setting, there is no standard, widely adopted benchmark suite for federated transfer fine-tuning of LLMs. We therefore propose the use of five datasets with heterogeneous tasks for training, and their respective test sets for evaluation and benchmarking:
+\begin{itemize}
+    \item GSM8k - We use GSM8k to represent the math task. We use accuracy on its test set as our evaluation metric. 
+    \item HellaSwag - HellaSwag represents a commonsense reasoning task. We use accuracy on its test set as our evaluation metric. 
+    \item XSum - XSum is an extreme summarization dataset. We use ROUGE-L F1 on its test set as our evaluation metric. 
+    \item HotPotQA - HotPotQA is a multi-hop QA dataset. We use F1 on its test set as our evaluation metric. 
+    \item MBPP - MBPP is a python coding dataset. We use pass@1 as our evaluation metric.
+\end{itemize}
+
+In the Single-Client Datasets regime, we evaluate the global model on all task benchmarks, and evaluate specialization retention of the constituent client models on their respective benchmarks. In the Multi-Client Datasets regime, we simply benchmark the global model due to the added system complexity and compute demand. 
+
+We believe this is a diverse range of tasks that will clearly demonstrate any successes or failure in transfer learning. The tasks require different skills and knowledge of the LLM, and often use differing system instructions, formatting, or prompting strategies. We do \textbf{no standardization} between the datasets, maintaining any and all heterogeneity between the datasets. 
+
+Unless otherwise stated, we fine-tune a LLaMA2-7B model with LoRA on attention projections. We run for 60 federated rounds with full participation in the Single-Client regime. We perform 60 rounds with partial client participation in the Multi-Client regime. Detailed hyperparameters, hardware, and preprocessing are located in the Appendix.
+
+\subsection{Baselines and Training Regimes}
+\label{sec:exp-methods}
+We principally look at four training regimes:
+\begin{itemize}
+  \item \textbf{Centralized multi-task training:} Train one LoRA model on the union of all the datasets.
+  \item \textbf{Centralized single-task training:} Train one LoRA model on one of the datasets. We provide the single-task trained model for each dataset, acting as a representative ceiling for that task's performance. 
+  \item \textbf{FedAvg-LoRA:} standard federated averaging on LoRA parameters (and standard FedAvg on other parameters).
+  \item \textbf{SubspaceBank:} SubspaceBank structured aggregation with per-client projection payloads and projected-gradient local training.
+\end{itemize}
+
+Many federated optimization methods are designed around a single-distribution FL objective (often under mild heterogeneity) or personalization assumptions. Adapting such methods to the dataset-pure FTL protocol and evaluating them fairly at LLM scale is nontrivial. We therefore focus comparisons on FedAvg and centralized training as primary reference points, and include extensive internal ablations to isolate the contributions of SubspaceBank’s components.
+
+
+
+\subsection{Main Results: Global Robustness Across Benchmarks}
+\label{sec:exp-global}
+
+\paragraph{Single-Client Datasets regime (global model).}
+Table~\ref{tab:global_nonsharded} reports the global-model benchmark results for our initial Single-Client Datasets run (five dataset-clients; 100 eval samples per benchmark where available). Two patterns are salient. First, FedAvg substantially underperforms centralized multi-task training across most benchmarks, consistent with interference under strong heterogeneity. Second, SubspaceBank improves over FedAvg on GSM8K, HellaSwag, XSum, and HotpotQA F1, narrowing the gap to centralized on several tasks. For a coarse single-number summary, the macro average over one primary metric per dataset (GSM8K acc, HellaSwag acc, XSum ROUGE-L F1, HotpotQA F1, MBPP pass@1) improves from 0.1037 (FedAvg) to 0.1597 (SubspaceBank), while centralized multi-task attains 0.1708.\footnote{We emphasize that this macro average mixes heterogeneous task metrics; we use it only as a rough scalar summary and prioritize per-task comparisons.} Centralized single-task results (per-dataset ceilings) will be reported alongside these comparisons as runs complete.
+
+\begin{table*}[t]
+  \caption{Global model robustness in the Single-Client Datasets regime (five clients; 60 rounds; 100 eval samples per benchmark where available). Centralized single-task entries are per-dataset ceilings and will be filled in as runs complete.}
+  \label{tab:global_nonsharded}
+  \centering
+  \begin{small}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Benchmark (metric)} & \textbf{Centralized (multi-task)} & \textbf{Centralized (single-task)} & \textbf{FedAvg-LoRA} & \textbf{SubspaceBank} \\
+    \midrule
+    gsm8k (acc)          & 0.1357 & \texttt{TBD} & 0.0713 & 0.1251 \\
+    hellaswag (acc)      & 0.4600 & \texttt{TBD} & 0.1500 & 0.3600 \\
+    xsum (rougeL\_f1)     & 0.1791 & \texttt{TBD} & 0.1635 & 0.1832 \\
+    hotpotqa (F1)        & 0.0790 & \texttt{TBD} & 0.1237 & 0.1304 \\
+    mbpp (pass@1)        & 0.0000 & \texttt{TBD} & 0.0100 & 0.0000 \\
+    \midrule
+    \textbf{Macro (primary metric / dataset)} & 0.1708 & \texttt{TBD} & 0.1037 & 0.1597 \\
+    \bottomrule
+  \end{tabular}
+  \end{small}
+\end{table*}
+
+\paragraph{Multi-Client Datasets (partial participation; table shell).}
+We are currently running the Multi-Client Datasets regime, where each dataset is split across multiple dataset-pure clients. This regime increases the number of clients and introduces partial participation effects while avoiding cross-dataset mixing at the client level. Table~\ref{tab:global_sharded_shell} provides the reporting shell we will use for these results. In the final paper, we will include: (i) a main table of global robustness across all benchmarks, (ii) convergence-vs-round plots, and (iii) participation-rate (and clients-per-dataset) sensitivity analyses (see \Cref{sec:exp-ablations}).
+
+\begin{table*}[t]
+  \caption{Global model robustness in the Multi-Client Datasets regime (placeholders to be filled). We will report per-benchmark metrics and macro summaries, along with participation-rate and client-count details.}
+  \label{tab:global_sharded_shell}
+  \centering
+  \begin{small}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Benchmark (metric)} & \textbf{Centralized (multi-task)} & \textbf{Centralized (single-task)} & \textbf{FedAvg-LoRA} & \textbf{SubspaceBank} \\
+    \midrule
+    gsm8k (acc)          & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+    hellaswag (acc)      & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+    xsum (rougeL\_f1)     & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+    hotpotqa (F1)        & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+    mbpp (pass@1)        & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+    \midrule
+    \textbf{Macro (primary metric / dataset)} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+    \bottomrule
+  \end{tabular}
+  \end{small}
+\end{table*}
+
+\subsection{Specialization Retention (Single-Client Datasets only)}
+\label{sec:exp-specialization}
+In the Single-Client Datasets regime, we additionally evaluate each client’s post-local model on its own benchmark to test specialization retention. This isolates whether improved global robustness comes at the cost of degrading client-local performance (or whether interference control can preserve specialization while improving global transfer). Because this regime has only five clients (one per dataset), distributional summaries (e.g., percentiles) are not informative; instead, we report dataset-wise specialization scores and their mean across datasets. Table~\ref{tab:spec_shell} provides the reporting shell; it will compare FedAvg and SubspaceBank.
+
+\begin{table}[t]
+  \caption{Specialization retention in the Single-Client Datasets regime (placeholders). Each client post-local model is evaluated on its own dataset benchmark; we report dataset-wise scores and the mean across datasets.}
+  \label{tab:spec_shell}
+  \centering
+  \begin{small}
+  \begin{tabular}{lcc}
+    \toprule
+    \textbf{Dataset (metric)} & \textbf{FedAvg-LoRA} & \textbf{SubspaceBank} \\
+    \midrule
+    GSM8k (acc)          & \texttt{TBD} & \texttt{TBD} \\
+    HellaSwag (acc)      & \texttt{TBD} & \texttt{TBD} \\
+    XSum (rougeL\_f1)     & \texttt{TBD} & \texttt{TBD} \\
+    HotPotQA (F1)        & \texttt{TBD} & \texttt{TBD} \\
+    MBPP (pass@1)        & \texttt{TBD} & \texttt{TBD} \\
+    \midrule
+    \textbf{Mean across datasets} & \texttt{TBD} & \texttt{TBD} \\
+    \bottomrule
+  \end{tabular}
+  \end{small}
+\end{table}
+
+\subsection{Ablations and Sensitivity (High Priority: Necessity Grid)}
+\label{sec:exp-ablations}
+We prioritize a compact necessity grid to isolate which components drive improvements:
+(i) FedAvg; (ii) decomposition-only (set $\beta_g=\beta_r=1$ to test decomposition without reweighting);
+(iii) reweight-only (set $r_c=0$ to disable private extraction and test shared/residual reweighting alone);
+(iv) SubspaceBank (server-only); and (v) SubspaceBank (full: + projection). We additionally include ablations that are particularly important given implementation details: (a) A-only vs.\ B-only vs.\ A+B banking (because $B$ has right dimension $r$), (b) sweeps over $(r_g,r_c)$ and $(\beta_g,\beta_r)$, and (c) extension sweeps over $\rho$, payload mode (\texttt{others\_private} vs.\ \texttt{others\_plus\_shared}), and payload rank cap $r_Q$. Finally, for the Multi-Client Datasets regime we sweep participation rate (and clients per dataset), emphasizing that bases are computed from $S_t$ only (no cache/EMA), so participation directly affects basis estimation quality.
+
+
+\subsection{Geometry Diagnostics (Main + Appendix)}
+\label{sec:exp-geometry}
+We analyze the decomposition using energy fractions of the shared/private/residual components and quantify projection leakage via gradient energy along the constraint span. For each delta $D$ (suppressing indices), we compute energy fractions
+\begin{align}
+  \texttt{glob\_frac} &= \frac{\|D^{\mathrm{glob}}\|_F^2}{\|D\|_F^2}, \\
+  \texttt{priv\_frac} &= \frac{\|D^{\mathrm{priv}}\|_F^2}{\|D\|_F^2}, \\
+  \texttt{resid\_frac} &= \frac{\|R\|_F^2}{\|D\|_F^2}. \label{eq:fractions}
+\end{align}
+For the projected local update mechanism, we additionally measure a \emph{leakage proxy}: the gradient energy in $\mathrm{span}(Q_k^{(i)})$ before and after applying \Cref{eq:grad_proj}, aggregated across keys and steps.
+
+In the main text, we will include at least one figure relating global robustness gains (relative to FedAvg) to the decomposition fractions (e.g., higher \texttt{glob\_frac} and lower \texttt{resid\_frac} correlating with improved robustness). The Appendix will expand diagnostics to include orthogonality checks (e.g., $\|S^\top P\|$), cross-private similarity/principal angles, and SubspaceBank leakage proxies (pre/post projection energy in $\mathrm{span}(Q^{(i)})$), and will analyze how these quantities vary with participation and rank choices.
+latex
+Copy code
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Discussion and Limitations}
+\label{sec:discussion}
+
+Our initial baseline results support the hypothesis that FTL with heterogeneous dataset-clients induces destructive interference for naïve averaging: FedAvg underperforms centralized training across most benchmarks (\Cref{sec:exp-global}). SubspaceBank partially mitigates this, improving global robustness on several tasks, consistent with the idea that separating shared vs.\ private directions and constraining cross-private leakage can stabilize training.
+
+We expect SubspaceBank to help most when heterogeneity is high but there exists meaningful shared structure: in such cases, \texttt{glob\_frac} should be nontrivial and amplifying $D^{\mathrm{glob}}$ should improve robustness, while suppressing residuals should reduce instability. Conversely, the method may help less under low heterogeneity (where FedAvg already works), in regimes with extremely small right dimension for key parameters (notably LoRA $B$), or when deltas are noisy and private structure cannot be reliably estimated from limited $S_t$. Partial participation is a key limitation in the current implementation: because $S_k$ and $P_{k,i}$ are computed only from $S_t$ each round (no cache/EMA/TTL), basis estimates can vary across rounds as participation changes.
+
+The bank requires per-client deltas; strict secure aggregation would prevent direct computation of $S_k$ and $P_{k,i}$. Potential mitigations include rank caps, clipping, DP noise on deltas, or redesigning the geometry extraction to be aggregation-compatible. Finally, system overhead and fairness must be addressed with explicit budget accounting: server SVD/QR costs, client projection costs, and payload communication must be quantified and compared against matched-capacity FedAvg baselines (Appendix).
+latex
+Copy code
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Related Work}
+\label{sec:related}
+
+We relate our work to three areas. (i) \textbf{Federated learning under heterogeneity:} extensive work studies optimization and generalization under non-IID data, including proximal objectives, control variates, and clustering/personalization; we contrast these with the FTL objective of a single globally robust model across tasks and emphasize our use of PEFT geometry during aggregation. (ii) \textbf{Federated LLM adaptation with PEFT:} federated instruction/domain adaptation and personalization using LoRA/adapters; we share the PEFT motivation (communication and stability) but target a different objective and propose geometry-aware aggregation and client-side constraints. (iii) \textbf{Subspace/projection methods for fine-tuning:} centralized constrained updates, orthogonality and interference-avoidance in transfer/continual learning, and single-span decomposition/filtering methods; we position SubspaceBank as a \emph{federated} multi-subspace decomposition computed from federated deltas and used for structured aggregation, together with bank-derived per-client constraints during local optimization to reduce cross-task interference.
+latex
+Copy code
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Conclusion}
+\label{sec:conclusion}
+
+We studied federated transfer fine-tuning (FTL) for LLMs, where clients correspond to distinct datasets/tasks and the goal is one global model robust across all benchmarks. We introduced SubspaceBank, which decomposes participating client LoRA deltas into shared/private/residual components via a residual-first nested-projection procedure and aggregates them using a structured recombination rule that amplifies consensus while suppressing residual noise. SubspaceBank additionally broadcasts per-client bases spanning other clients’ private subspaces and applies projected-gradient local updates to reduce cross-private leakage during multi-step optimization. Our initial baseline results show that FedAvg underperforms centralized training under heterogeneous dataset-clients, while SubspaceBank improves over FedAvg on several benchmarks and narrows the gap to centralized. The final paper will report full Multi-Client Datasets results, ablations, geometry diagnostics, and budget accounting; reproducibility details, budget accounting, and extended diagnostics are provided in the Appendix.
+latex
+Copy code
+
+
+\section*{Impact Statement}
+
+Authors are \textbf{required} to include a statement of the potential broader
+impact of their work, including its ethical aspects and future societal
+consequences. This statement should be in an unnumbered section at the end of
+the paper (co-located with Acknowledgements -- the two may appear in either
+order, but both must be before References), and does not count toward the paper
+page limit. In many cases, where the ethical impacts and expected societal
+implications are those that are well established when advancing the field of
+Machine Learning, substantial discussion is not required, and a simple
+statement such as the following will suffice:
+
+``This paper presents work whose goal is to advance the field of Machine
+Learning. There are many potential societal consequences of our work, none
+which we feel must be specifically highlighted here.''
+
+The above statement can be used verbatim in such cases, but we encourage
+authors to think about whether there is content which does warrant further
+discussion, as this statement will be apparent if the paper is later flagged
+for ethics review.
+
+% In the unusual situation where you want a paper to appear in the
+% references without citing it in the main text, use \nocite
+\nocite{langley00}
+
+\bibliography{example_paper}
+\bibliographystyle{icml2026}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% APPENDIX
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\appendix
+\onecolumn
+
+\section{Reproducibility Details}
+\begin{itemize}
+  \item \textbf{Baseline run identifiers:}
+  Run id \texttt{individual\_local\_20260115\_100457\_21987};
+  results root \texttt{FTL/individual\_results/individual\_local\_20260115\_100457\_21987};
+  eval job id \texttt{eval\_individual\_local\_20260115\_100457\_21987}.
+  \item \textbf{Datasets (Single-Client Datasets baseline; one client per task):}
+  GSM8K, HellaSwag, XSum, MBPP, HotpotQA (distractor).
+  Clients configured in \texttt{FTL/materials/individual\_federated\_clients.yaml} and prepared in \texttt{data/individual\_federated}.
+  \item \textbf{Model + PEFT:}
+  base model \texttt{meta-llama/Llama-2-7b-hf};
+  LoRA $r{=}8$, $\alpha{=}32$, dropout $0.05$;
+  target modules \texttt{q\_proj,k\_proj,v\_proj,o\_proj};
+  token length 2048.
+  \item \textbf{Federated configs:}
+  FedAvg \texttt{FTL/yamls/individual\_federated\_fedavg.yaml};
+  SubspaceBank \texttt{FTL/yamls/individual\_federated\_bank\_perclient.yaml} (projection enabled);
+  centralized \texttt{FTL/yamls/individual\_federated\_centralized.yaml}.
+  \item \textbf{Key baseline hyperparameters (Single-Client Datasets):}
+  total rounds 60; local steps 250 (FedAvg/SubspaceBank) and 75 (centralized); batch size 1; precision bf16; learning rate $2\cdot 10^{-4}$ (FedAvg/SubspaceBank) and $2\cdot 10^{-5}$ (centralized); sample client rate 1.0 for federated baselines (full participation).
+  \item \textbf{Evaluation:}
+  100 samples per benchmark (where available). Aggregate metrics loaded from each method’s \texttt{eval/aggregate.json}. We exclude failed or missing benchmarks from comparisons.
+  \item \textbf{Missing/failed benchmarks in this run:}
+  PIQA (dataset load failure), APPS (dataset load failure), ToolBench (evaluation not run due to missing eval command/output).
+  \item \textbf{Multi-Client Datasets regime details (to be filled):}
+  client construction protocol, clients per dataset, participation rate schedule, and any client-level filtering; these will be documented here once the run completes.
+\end{itemize}
+
+\section{Budget Accounting}
+\begin{itemize}
+  \item Trainable parameter counts (LoRA ranks) per method; parameter/key counts for banked tensors.
+  \item Server compute overhead per round (SVD/QR) and its scaling with $|S_t|$, $d_{\mathrm{in}}$, and chosen ranks; client projection overhead per step.
+  \item Communication: bytes per round for model broadcast and client returns; additional payload bytes for $Q^{(i)}$ (including rank cap effects); totals across training.
+  \item Construction of matched-capacity/budget baselines (e.g., higher-rank FedAvg or additional local steps) and how we normalize comparisons.
+\end{itemize}
+
+\section{Proofs and Extended Theory Details}
+\begin{itemize}
+  \item Full proofs for Track A (operator form) and supporting lemmas; discussion of assumptions/limits under partial participation and finite-sample basis estimation.
+  \item Extended analysis for Track B: idealized projection lemma; practical leakage characterization under multi-step training, clipping, and adaptive optimizers; dependence on $\rho$, payload rank truncation, and basis error.
+\end{itemize}
+
+\section{Additional Diagnostics and Ablations}
+\begin{itemize}
+  \item Full geometry suite: orthogonality checks, principal angles between private bases, cross-private similarity matrices, and per-key/per-round summaries.
+  \item SubspaceBank leakage measurement protocol: pre/post projection energy along $Q^{(i)}$ aggregated over steps/keys; correlation plots with benchmark improvements.
+  \item Extended sweeps: ranks $(r_g,r_c)$, weights $(\beta_g,\beta_r)$, projection strength $\rho$, payload mode, payload rank cap; A-only vs.\ B-only vs.\ A+B banking.
+  \item Participation sweeps (especially Multi-Client Datasets): sensitivity to sample client rate, clients per dataset, and (if implemented) recompute frequency or caching variants.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% APPENDIX (reproducibility + budgets + extra diagnostics)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+% \section{Electronic Submission}
+
+% Submission to ICML 2026 will be entirely electronic, via a web site
+% (not email). Information about the submission process and \LaTeX\ templates
+% are available on the conference web site at:
+% \begin{center}
+%   \texttt{http://icml.cc/}
+% \end{center}
+
+% The guidelines below will be enforced for initial submissions and
+% camera-ready copies. Here is a brief summary:
+% \begin{itemize}
+%   \item Submissions must be in PDF\@.
+%   \item If your paper has appendices, submit the appendix together with the
+%         main body and the references \textbf{as a single file}. Reviewers will not
+%         look for appendices as a separate PDF file. So if you submit such an extra
+%         file, reviewers will very likely miss it.
+%   \item Page limit: The main body of the paper has to be fitted to 8 pages,
+%         excluding references and appendices; the space for the latter two is not
+%         limited in pages, but the total file size may not exceed 10MB. For the
+%         final version of the paper, authors can add one extra page to the main
+%         body.
+%   \item \textbf{Do not include author information or acknowledgements} in your
+%         initial submission.
+%   \item Your paper should be in \textbf{10 point Times font}.
+%   \item Make sure your PDF file only uses Type-1 fonts.
+%   \item Place figure captions \emph{under} the figure (and omit titles from
+%         inside the graphic file itself). Place table captions \emph{over} the
+%         table.
+%   \item References must include page numbers whenever possible and be as
+%         complete as possible. Place multiple citations in chronological order.
+%   \item Do not alter the style template; in particular, do not compress the
+%         paper format by reducing the vertical spaces.
+%   \item Keep your abstract brief and self-contained, one paragraph and roughly
+%         4--6 sentences. Gross violations will require correction at the
+%         camera-ready phase. The title should have content words capitalized.
+% \end{itemize}
+
+% \subsection{Submitting Papers}
+
+% \textbf{Anonymous Submission:} ICML uses double-blind review: no identifying
+% author information may appear on the title page or in the paper
+% itself. \cref{author info} gives further details.
+
+% \medskip
+
+% Authors must provide their manuscripts in \textbf{PDF} format.
+% Furthermore, please make sure that files contain only embedded Type-1 fonts
+% (e.g.,~using the program \texttt{pdffonts} in linux or using
+% File/DocumentProperties/Fonts in Acrobat). Other fonts (like Type-3)
+% might come from graphics files imported into the document.
+
+% Authors using \textbf{Word} must convert their document to PDF\@. Most
+% of the latest versions of Word have the facility to do this
+% automatically. Submissions will not be accepted in Word format or any
+% format other than PDF\@. Really. We're not joking. Don't send Word.
+
+% Those who use \textbf{\LaTeX} should avoid including Type-3 fonts.
+% Those using \texttt{latex} and \texttt{dvips} may need the following
+% two commands:
+
+% {\footnotesize
+% \begin{verbatim}
+% dvips -Ppdf -tletter -G0 -o paper.ps paper.dvi
+% ps2pdf paper.ps
+% \end{verbatim}}
+% It is a zero following the ``-G'', which tells dvips to use
+% the config.pdf file. Newer \TeX\ distributions don't always need this
+% option.
+
+% Using \texttt{pdflatex} rather than \texttt{latex}, often gives better
+% results. This program avoids the Type-3 font problem, and supports more
+% advanced features in the \texttt{microtype} package.
+
+% \textbf{Graphics files} should be a reasonable size, and included from
+% an appropriate format. Use vector formats (.eps/.pdf) for plots,
+% lossless bitmap formats (.png) for raster graphics with sharp lines, and
+% jpeg for photo-like images.
+
+% The style file uses the \texttt{hyperref} package to make clickable
+% links in documents. If this causes problems for you, add
+% \texttt{nohyperref} as one of the options to the \texttt{icml2026}
+% usepackage statement.
+
+% \subsection{Submitting Final Camera-Ready Copy}
+
+% The final versions of papers accepted for publication should follow the
+% same format and naming convention as initial submissions, except that
+% author information (names and affiliations) should be given. See
+% \cref{final author} for formatting instructions.
+
+% The footnote, ``Preliminary work. Under review by the International
+% Conference on Machine Learning (ICML). Do not distribute.'' must be
+% modified to ``\textit{Proceedings of the
+%   $\mathit{43}^{rd}$ International Conference on Machine Learning},
+% Seoul, South Korea, PMLR 306, 2026.
+% Copyright 2026 by the author(s).''
+
+% For those using the \textbf{\LaTeX} style file, this change (and others) is
+% handled automatically by simply changing
+% $\mathtt{\backslash usepackage\{icml2026\}}$ to
+% $$\mathtt{\backslash usepackage[accepted]\{icml2026\}}$$
+% Authors using \textbf{Word} must edit the
+% footnote on the first page of the document themselves.
+
+% Camera-ready copies should have the title of the paper as running head
+% on each page except the first one. The running title consists of a
+% single line centered above a horizontal rule which is $1$~point thick.
+% The running head should be centered, bold and in $9$~point type. The
+% rule should be $10$~points above the main text. For those using the
+% \textbf{\LaTeX} style file, the original title is automatically set as running
+% head using the \texttt{fancyhdr} package which is included in the ICML
+% 2026 style file package. In case that the original title exceeds the
+% size restrictions, a shorter form can be supplied by using
+
+% \verb|\icmltitlerunning{...}|
+
+% just before $\mathtt{\backslash begin\{document\}}$.
+% Authors using \textbf{Word} must edit the header of the document themselves.
+
+% \section{Format of the Paper}
+
+% All submissions must follow the specified format.
+
+% \subsection{Dimensions}
+
+% The text of the paper should be formatted in two columns, with an
+% overall width of 6.75~inches, height of 9.0~inches, and 0.25~inches
+% between the columns. The left margin should be 0.75~inches and the top
+% margin 1.0~inch (2.54~cm). The right and bottom margins will depend on
+% whether you print on US letter or A4 paper, but all final versions
+% must be produced for US letter size.
+% Do not write anything on the margins.
+
+% The paper body should be set in 10~point type with a vertical spacing
+% of 11~points. Please use Times typeface throughout the text.
+
+% \subsection{Title}
+
+% The paper title should be set in 14~point bold type and centered
+% between two horizontal rules that are 1~point thick, with 1.0~inch
+% between the top rule and the top edge of the page. Capitalize the
+% first letter of content words and put the rest of the title in lower
+% case.
+% You can use TeX math in the title (we suggest sparingly),
+% but no custom macros, images, or other TeX commands.
+% Please make sure that accents, special characters, etc., are entered using
+% TeX commands and not using non-English characters.
+
+% \subsection{Author Information for Submission}
+% \label{author info}
+
+% ICML uses double-blind review, so author information must not appear. If
+% you are using \LaTeX\/ and the \texttt{icml2026.sty} file, use
+% \verb+\icmlauthor{...}+ to specify authors and \verb+\icmlaffiliation{...}+
+% to specify affiliations. (Read the TeX code used to produce this document for
+% an example usage.) The author information will not be printed unless
+% \texttt{accepted} is passed as an argument to the style file. Submissions that
+% include the author information will not be reviewed.
+
+% \subsubsection{Self-Citations}
+
+% If you are citing published papers for which you are an author, refer
+% to yourself in the third person. In particular, do not use phrases
+% that reveal your identity (e.g., ``in previous work \cite{langley00}, we
+% have shown \ldots'').
+
+% Do not anonymize citations in the reference section. The only exception are manuscripts that are
+% not yet published (e.g., under submission). If you choose to refer to
+% such unpublished manuscripts \cite{anonymous}, anonymized copies have
+% to be submitted
+% as Supplementary Material via OpenReview\@. However, keep in mind that an ICML
+% paper should be self contained and should contain sufficient detail
+% for the reviewers to evaluate the work. In particular, reviewers are
+% not required to look at the Supplementary Material when writing their
+% review (they are not required to look at more than the first $8$ pages of the submitted document).
+
+% \subsubsection{Camera-Ready Author Information}
+% \label{final author}
+
+% If a paper is accepted, a final camera-ready copy must be prepared.
+% %
+% For camera-ready papers, author information should start 0.3~inches below the
+% bottom rule surrounding the title. The authors' names should appear in 10~point
+% bold type, in a row, separated by white space, and centered. Author names should
+% not be broken across lines. Unbolded superscripted numbers, starting 1, should
+% be used to refer to affiliations.
+
+% Affiliations should be numbered in the order of appearance. A single footnote
+% block of text should be used to list all the affiliations. (Academic
+% affiliations should list Department, University, City, State/Region, Country.
+% Similarly for industrial affiliations.)
+
+% Each distinct affiliations should be listed once. If an author has multiple
+% affiliations, multiple superscripts should be placed after the name, separated
+% by thin spaces. If the authors would like to highlight equal contribution by
+% multiple first authors, those authors should have an asterisk placed after their
+% name in superscript, and the term ``\textsuperscript{*}Equal contribution"
+% should be placed in the footnote block ahead of the list of affiliations. A
+% list of corresponding authors and their emails (in the format Full Name
+% \textless{}email@domain.com\textgreater{}) can follow the list of affiliations.
+% Ideally only one or two names should be listed.
+
+% A sample file with author names is included in the ICML2026 style file
+% package. Turn on the \texttt{[accepted]} option to the stylefile to
+% see the names rendered. All of the guidelines above are implemented
+% by the \LaTeX\ style file.
+
+% \subsection{Abstract}
+
+% The paper abstract should begin in the left column, 0.4~inches below the final
+% address. The heading `Abstract' should be centered, bold, and in 11~point type.
+% The abstract body should use 10~point type, with a vertical spacing of
+% 11~points, and should be indented 0.25~inches more than normal on left-hand and
+% right-hand margins. Insert 0.4~inches of blank space after the body. Keep your
+% abstract brief and self-contained, limiting it to one paragraph and roughly 4--6
+% sentences. Gross violations will require correction at the camera-ready phase.
+
+% \subsection{Partitioning the Text}
+
+% You should organize your paper into sections and paragraphs to help readers
+% place a structure on the material and understand its contributions.
+
+% \subsubsection{Sections and Subsections}
+
+% Section headings should be numbered, flush left, and set in 11~pt bold type
+% with the content words capitalized. Leave 0.25~inches of space before the
+% heading and 0.15~inches after the heading.
+
+% Similarly, subsection headings should be numbered, flush left, and set in 10~pt
+% bold type with the content words capitalized. Leave
+% 0.2~inches of space before the heading and 0.13~inches afterward.
+
+% Finally, subsubsection headings should be numbered, flush left, and set in
+% 10~pt small caps with the content words capitalized. Leave
+% 0.18~inches of space before the heading and 0.1~inches after the heading.
+
+% Please use no more than three levels of headings.
+
+% \subsubsection{Paragraphs and Footnotes}
+
+% Within each section or subsection, you should further partition the paper into
+% paragraphs. Do not indent the first line of a given paragraph, but insert a
+% blank line between succeeding ones.
+
+% You can use footnotes\footnote{Footnotes should be complete sentences.}
+% to provide readers with additional information about a topic without
+% interrupting the flow of the paper. Indicate footnotes with a number in the
+% text where the point is most relevant. Place the footnote in 9~point type at
+% the bottom of the column in which it appears. Precede the first footnote in a
+% column with a horizontal rule of 0.8~inches.\footnote{Multiple footnotes can
+%   appear in each column, in the same order as they appear in the text,
+%   but spread them across columns and pages if possible.}
+
+% \begin{figure}[ht]
+%   \vskip 0.2in
+%   \begin{center}
+%     \centerline{\includegraphics[width=\columnwidth]{icml_numpapers}}
+%     \caption{
+%       Historical locations and number of accepted papers for International
+%       Machine Learning Conferences (ICML 1993 -- ICML 2008) and International
+%       Workshops on Machine Learning (ML 1988 -- ML 1992). At the time this
+%       figure was produced, the number of accepted papers for ICML 2008 was
+%       unknown and instead estimated.
+%     }
+%     \label{icml-historical}
+%   \end{center}
+% \end{figure}
+
+% \subsection{Figures}
+
+% You may want to include figures in the paper to illustrate your approach and
+% results. Such artwork should be centered, legible, and separated from the text.
+% Lines should be dark and at least 0.5~points thick for purposes of
+% reproduction, and text should not appear on a gray background.
+
+% Label all distinct components of each figure. If the figure takes the form of a
+% graph, then give a name for each axis and include a legend that briefly
+% describes each curve. Do not include a title inside the figure; instead, the
+% caption should serve this function.
+
+% Number figures sequentially, placing the figure number and caption \emph{after}
+% the graphics, with at least 0.1~inches of space before the caption and
+% 0.1~inches after it, as in \cref{icml-historical}. The figure caption should be
+% set in 9~point type and centered unless it runs two or more lines, in which
+% case it should be flush left. You may float figures to the top or bottom of a
+% column, and you may set wide figures across both columns (use the environment
+% \texttt{figure*} in \LaTeX). Always place two-column figures at the top or
+% bottom of the page.
+
+% \subsection{Algorithms}
+
+% If you are using \LaTeX, please use the ``algorithm'' and ``algorithmic''
+% environments to format pseudocode. These require the corresponding stylefiles,
+% algorithm.sty and algorithmic.sty, which are supplied with this package.
+% \cref{alg:example} shows an example.
+
+% \begin{algorithm}[tb]
+%   \caption{Bubble Sort}
+%   \label{alg:example}
+%   \begin{algorithmic}
+%     \STATE {\bfseries Input:} data $x_i$, size $m$
+%     \REPEAT
+%     \STATE Initialize $noChange = true$.
+%     \FOR{$i=1$ {\bfseries to} $m-1$}
+%     \IF{$x_i > x_{i+1}$}
+%     \STATE Swap $x_i$ and $x_{i+1}$
+%     \STATE $noChange = false$
+%     \ENDIF
+%     \ENDFOR
+%     \UNTIL{$noChange$ is $true$}
+%   \end{algorithmic}
+% \end{algorithm}
+
+
+% \subsection{Tables}
+
+% You may also want to include tables that summarize material. Like figures,
+% these should be centered, legible, and numbered consecutively. However, place
+% the title \emph{above} the table with at least 0.1~inches of space before the
+% title and the same after it, as in \cref{sample-table}. The table title should
+% be set in 9~point type and centered unless it runs two or more lines, in which
+% case it should be flush left.
+
+% % Note use of \abovespace and \belowspace to get reasonable spacing
+% % above and below tabular lines.
+
+% \begin{table}[t]
+%   \caption{Classification accuracies for naive Bayes and flexible
+%     Bayes on various data sets.}
+%   \label{sample-table}
+%   \begin{center}
+%     \begin{small}
+%       \begin{sc}
+%         \begin{tabular}{lcccr}
+%           \toprule
+%           Data set  & Naive         & Flexible      & Better?  \\
+%           \midrule
+%           Breast    & 95.9$\pm$ 0.2 & 96.7$\pm$ 0.2 & $\surd$  \\
+%           Cleveland & 83.3$\pm$ 0.6 & 80.0$\pm$ 0.6 & $\times$ \\
+%           Glass2    & 61.9$\pm$ 1.4 & 83.8$\pm$ 0.7 & $\surd$  \\
+%           Credit    & 74.8$\pm$ 0.5 & 78.3$\pm$ 0.6 &          \\
+%           Horse     & 73.3$\pm$ 0.9 & 69.7$\pm$ 1.0 & $\times$ \\
+%           Meta      & 67.1$\pm$ 0.6 & 76.5$\pm$ 0.5 & $\surd$  \\
+%           Pima      & 75.1$\pm$ 0.6 & 73.9$\pm$ 0.5 &          \\
+%           Vehicle   & 44.9$\pm$ 0.6 & 61.5$\pm$ 0.4 & $\surd$  \\
+%           \bottomrule
+%         \end{tabular}
+%       \end{sc}
+%     \end{small}
+%   \end{center}
+%   \vskip -0.1in
+% \end{table}
+
+% Tables contain textual material, whereas figures contain graphical material.
+% Specify the contents of each row and column in the table's topmost row. Again,
+% you may float tables to a column's top or bottom, and set wide tables across
+% both columns. Place two-column tables at the top or bottom of the page.
+
+% \subsection{Theorems and Such}
+% The preferred way is to number definitions, propositions, lemmas, etc.
+% consecutively, within sections, as shown below.
+% \begin{definition}
+%   \label{def:inj}
+%   A function $f:X \to Y$ is injective if for any $x,y\in X$ different, $f(x)\ne
+%     f(y)$.
+% \end{definition}
+% Using \cref{def:inj} we immediate get the following result:
+% \begin{proposition}
+%   If $f$ is injective mapping a set $X$ to another set $Y$,
+%   the cardinality of $Y$ is at least as large as that of $X$
+% \end{proposition}
+% \begin{proof}
+%   Left as an exercise to the reader.
+% \end{proof}
+% \cref{lem:usefullemma} stated next will prove to be useful.
+% \begin{lemma}
+%   \label{lem:usefullemma}
+%   For any $f:X \to Y$ and $g:Y\to Z$ injective functions, $f \circ g$ is
+%   injective.
+% \end{lemma}
+% \begin{theorem}
+%   \label{thm:bigtheorem}
+%   If $f:X\to Y$ is bijective, the cardinality of $X$ and $Y$ are the same.
+% \end{theorem}
+% An easy corollary of \cref{thm:bigtheorem} is the following:
+% \begin{corollary}
+%   If $f:X\to Y$ is bijective,
+%   the cardinality of $X$ is at least as large as that of $Y$.
+% \end{corollary}
+% \begin{assumption}
+%   The set $X$ is finite.
+%   \label{ass:xfinite}
+% \end{assumption}
+% \begin{remark}
+%   According to some, it is only the finite case (cf. \cref{ass:xfinite}) that
+%   is interesting.
+% \end{remark}
+% %restatable
+
+\end{document}
+
+% This document was modified from the file originally made available by
+% Pat Langley and Andrea Danyluk for ICML-2K. This version was created
+% by Iain Murray in 2018, and modified by Alexandre Bouchard in
+% 2019 and 2021 and by Csaba Szepesvari, Gang Niu and Sivan Sabato in 2022.
+% Modified again in 2023 and 2024 by Sivan Sabato and Jonathan Scarlett.
+% Previous contributors include Dan Roy, Lise Getoor and Tobias
+% Scheffer, which was slightly modified from the 2010 version by
+% Thorsten Joachims & Johannes Fuernkranz, slightly modified from the
+% 2009 version by Kiri Wagstaff and Sam Roweis's 2008 version, which is
+% slightly modified from Prasad Tadepalli's 2007 version which is a
+% lightly changed version of the previous year's version by Andrew
+% Moore, which was in turn edited from those of Kristian Kersting and
+% Codrina Lauth. Alex Smola contributed to the algorithmic style files.

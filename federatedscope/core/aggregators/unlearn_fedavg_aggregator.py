@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 _ROBUST_DELTA_RULES = {
     'krum', 'normbounding', 'median', 'trimmedmean', 'bulyan'
 }
+_BANK_GEOM_PAIR_LIMIT = 256
 
 
 class UnlearnFedAvgAggregator(ClientsAvgAggregator):
@@ -228,6 +229,7 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             r_global_cfg = int(getattr(bank_cfg, 'r_global', 0))
             r_client_cfg = int(getattr(bank_cfg, 'r_client', 0))
             energy_target = float(getattr(bank_cfg, 'energy_target', 0.0))
+            log_geometry = bool(getattr(bank_cfg, 'log_geometry', False))
             bank_send_per_client = bool(
                 getattr(bank_cfg, 'bank_send_per_client', False))
             bank_proj_mode = str(
@@ -237,6 +239,7 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                 getattr(bank_cfg, 'bank_proj_rank_max', 0))
             work_dtype = self._resolve_proj_dtype(proj_dtype)
             bank_stats = []
+            geom_stats = []
             shared_bases: Dict[str, torch.Tensor] = {}
             private_bases: Dict[str, Dict[int, torch.Tensor]] = {}
 
@@ -262,6 +265,7 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                                                  dtype=work_dtype,
                                                  device=self._device)
                     frac_records = []
+                    priv_bases_local = []
                     for idx, delta_fp in enumerate(deltas_fp):
                         delta_fp = delta_fp.to(device=self._device,
                                                dtype=work_dtype)
@@ -287,8 +291,15 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                         client_id = client_ids[idx] if idx < len(client_ids) \
                             else idx
                         if priv_basis is not None and priv_basis.numel() > 0:
+                            priv_bases_local.append(priv_basis)
                             priv_dict = private_bases.setdefault(key, {})
                             priv_dict[client_id] = priv_basis.detach()
+
+                    if log_geometry:
+                        geom_record = self._compute_bank_geometry(
+                            key, S_k, priv_bases_local, work_dtype)
+                        geom_record['numel'] = int(base_tensor.numel())
+                        geom_stats.append(geom_record)
 
                     aggregated_delta = (alpha * delta_sum).to(
                         dtype=base_tensor.dtype)
@@ -386,6 +397,75 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                         'alpha=%.3f beta_global=%.3f beta_resid=%.3f',
                         weighted_global, weighted_private, weighted_resid,
                         alpha, beta_global, beta_resid)
+                if log_geometry and geom_stats:
+                    total_numel_geom = sum(item['numel']
+                                           for item in geom_stats)
+                    if total_numel_geom > 0:
+                        weighted_orth = sum(
+                            item['orth_mean'] * item['numel']
+                            for item in geom_stats) / total_numel_geom
+                        weighted_cross = sum(
+                            item['cross_mean'] * item['numel']
+                            for item in geom_stats) / total_numel_geom
+                    else:
+                        weighted_orth = 0.0
+                        weighted_cross = 0.0
+
+                    if getattr(self.cfg, 'wandb', None) and self.cfg.wandb.use:
+                        try:
+                            import wandb
+                            round_idx = agg_info.get('round')
+                            log_payload = {}
+                            for record in geom_stats:
+                                sanitized = record['key'].replace('.', '/')
+                                base_tag = f'unlearn_bank_geom/{sanitized}'
+                                log_payload[
+                                    f'{base_tag}/orth_mean'] = record[
+                                        'orth_mean']
+                                log_payload[
+                                    f'{base_tag}/orth_max'] = record[
+                                        'orth_max']
+                                log_payload[
+                                    f'{base_tag}/cross_mean'] = record[
+                                        'cross_mean']
+                                log_payload[
+                                    f'{base_tag}/cross_max'] = record[
+                                        'cross_max']
+                                log_payload[
+                                    f'{base_tag}/num_pairs'] = record[
+                                        'num_pairs']
+                            log_payload[
+                                'unlearn_bank_geom/summary/orth_mean'] = \
+                                weighted_orth
+                            log_payload[
+                                'unlearn_bank_geom/summary/cross_mean'] = \
+                                weighted_cross
+                            if log_payload:
+                                wandb.log(log_payload, step=round_idx)
+                        except ImportError:
+                            logger.warning(
+                                "cfg.wandb.use=True but wandb is not "
+                                "installed; skip logging geometry stats to "
+                                "wandb.")
+                        except Exception as exc:
+                            logger.warning(
+                                "Failed to log geometry stats to wandb: %s",
+                                exc)
+
+                    if log_stats:
+                        for record in geom_stats:
+                            logger.info(
+                                '[UNLEARN][bank][geom] key=%s orth_mean=%.4f '
+                                'orth_max=%.4f cross_mean=%.4f '
+                                'cross_max=%.4f pairs=%d failed=%s',
+                                record['key'], record['orth_mean'],
+                                record['orth_max'], record['cross_mean'],
+                                record['cross_max'], record['num_pairs'],
+                                record['failed'])
+                        logger.info(
+                            '[UNLEARN][bank][geom][avg] orth_mean=%.4f '
+                            'cross_mean=%.4f',
+                            weighted_orth, weighted_cross)
 
         maybe_clear_cuda(self._device)
 
@@ -843,6 +923,76 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
         d_priv = (residual @ priv_basis) @ priv_basis.transpose(-1, -2)
         d_res = delta - d_glob - d_priv
         return d_glob, d_priv, d_res, priv_basis
+
+    def _compute_bank_geometry(self, key: str,
+                               global_basis: Optional[torch.Tensor],
+                               priv_bases: List[torch.Tensor],
+                               proj_dtype: torch.dtype) -> Dict[str, float]:
+        record = {
+            'key': key,
+            'orth_mean': 0.0,
+            'orth_max': 0.0,
+            'cross_mean': 0.0,
+            'cross_max': 0.0,
+            'num_pairs': 0,
+            'failed': False,
+        }
+        if not priv_bases:
+            return record
+        try:
+            orth_vals = []
+            if global_basis is not None and global_basis.numel() > 0:
+                S = global_basis.to(device=self._device, dtype=proj_dtype)
+                for pb in priv_bases:
+                    if pb is None or pb.numel() == 0:
+                        continue
+                    inner = S.transpose(-1, -2) @ pb
+                    denom = (S.shape[1] * pb.shape[1])**0.5
+                    val = torch.linalg.norm(inner).item()
+                    if denom > 0:
+                        val = val / denom
+                    orth_vals.append(val)
+            if orth_vals:
+                record['orth_mean'] = sum(orth_vals) / len(orth_vals)
+                record['orth_max'] = max(orth_vals)
+
+            if len(priv_bases) >= 2:
+                cross_vals = []
+                pairs = 0
+                for i in range(len(priv_bases)):
+                    pb_i = priv_bases[i]
+                    if pb_i is None or pb_i.numel() == 0:
+                        continue
+                    for j in range(i + 1, len(priv_bases)):
+                        pb_j = priv_bases[j]
+                        if pb_j is None or pb_j.numel() == 0:
+                            continue
+                        inner = pb_i.transpose(-1, -2) @ pb_j
+                        denom = (pb_i.shape[1] * pb_j.shape[1])**0.5
+                        val = torch.linalg.norm(inner).item()
+                        if denom > 0:
+                            val = val / denom
+                        cross_vals.append(val)
+                        pairs += 1
+                        if pairs >= _BANK_GEOM_PAIR_LIMIT:
+                            break
+                    if pairs >= _BANK_GEOM_PAIR_LIMIT:
+                        break
+                record['num_pairs'] = pairs
+                if cross_vals:
+                    record['cross_mean'] = sum(cross_vals) / len(cross_vals)
+                    record['cross_max'] = max(cross_vals)
+        except Exception as exc:
+            record['failed'] = True
+            record['orth_mean'] = 0.0
+            record['orth_max'] = 0.0
+            record['cross_mean'] = 0.0
+            record['cross_max'] = 0.0
+            record['num_pairs'] = 0
+            logger.warning(
+                '[UNLEARN][bank] geometry stats failed for key %s: %s', key,
+                exc)
+        return record
 
     @staticmethod
     def _resolve_proj_dtype(name: str) -> torch.dtype:

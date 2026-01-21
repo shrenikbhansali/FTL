@@ -58,6 +58,7 @@ def extend_aggregator_cfg(cfg):
     cfg.aggregator.unlearn.bank.bank_proj_mode = \
         'others_private'  # {'others_private', 'others_plus_shared'}
     cfg.aggregator.unlearn.bank.bank_proj_rank_max = 0
+    cfg.aggregator.unlearn.bank.log_geometry = False
 
     # --------------- register corresponding check function ----------
     cfg.register_cfg_check_fun(assert_aggregator_cfg)
