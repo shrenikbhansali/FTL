@@ -1,0 +1,47 @@
+defaults:
+  tokenizer: "meta-llama/Llama-2-7b-hf"
+  max_length: 2048
+  val_fraction: 0.01
+  drop_long: true
+  streaming: true
+  max_total_samples: null
+  max_samples_per_client: null
+
+clients:
+  - name: gsm8k_client
+    dataset: "gsm8k"
+    config: "main"
+    split: "train"
+    style: "qa"
+    formatter: "gsm8k"
+    max_length: 2048
+
+  - name: hellaswag_client
+    dataset: "hellaswag"
+    split: "train"
+    style: "mcq"
+    formatter: "hellaswag"
+    max_length: 2048
+
+  - name: xsum_client
+    dataset: "xsum"
+    split: "train"
+    style: "summarization"
+    formatter: "xsum"
+    max_length: 2048
+
+  - name: mbpp_client
+    dataset: "mbpp"
+    split: "train"
+    val_split: "validation"
+    style: "code"
+    formatter: "mbpp"
+    max_length: 2048
+
+  - name: hotpotqa_client
+    dataset: "hotpot_qa"
+    config: "distractor"
+    split: "train"
+    style: "qa"
+    formatter: "hotpotqa"
+    max_length: 2048

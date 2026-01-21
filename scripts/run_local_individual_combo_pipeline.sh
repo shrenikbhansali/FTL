@@ -1,0 +1,740 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DRY_RUN=0
+SKIP_EVAL=0
+SKIP_TRAIN=0
+RESUME=0
+GPUS="0,1,2,3"
+PIPE_ID="${INDIVIDUAL_PIPE_ID:-}"
+EVAL_ID="${INDIVIDUAL_EVAL_ID:-}"
+TRAIN_OPTS="${INDIVIDUAL_TRAIN_OPTS:-}"
+DATA_ROOT="${INDIVIDUAL_DATA_ROOT:-data/individual_federated}"
+EVAL_MAX_SAMPLES="${INDIVIDUAL_EVAL_MAX_SAMPLES:-}"
+LONG_CFG_PREFIX="${INDIVIDUAL_LONG_CFG_PREFIX:-individual_federated_long}"
+SHARDED_CFG_PREFIX="${INDIVIDUAL_SHARDED_CFG_PREFIX:-individual_federated_sharded}"
+CONDA_ENV=""
+HF_HOME_OVERRIDE=""
+LONG_ID="${INDIVIDUAL_LONG_ID:-}"
+SHARDED_ID="${INDIVIDUAL_SHARDED_ID:-}"
+
+usage() {
+  cat <<'USAGE'
+Usage: run_local_individual_combo_pipeline.sh [options]
+
+Options:
+  --dry-run          Print commands without running them.
+  --skip-train       Skip training jobs and go straight to eval (if enabled).
+  --skip-eval        Skip evaluation jobs.
+  --resume           Skip steps with existing outputs.
+  --gpus             Comma-separated GPU list (default: 0,1,2,3).
+  --pipe-id          Override base pipeline id (default: auto).
+  --eval-id          Override base evaluation id (default: eval_<pipe-id>).
+  --train-opts       Extra federatedscope overrides (use :: as separator).
+  --data-root        Dataset root (default: data/individual_federated).
+  --eval-max-samples Max samples per eval task (default: 200).
+  --long-prefix      YAML prefix under yamls/ for the normal run (default: individual_federated_long).
+  --sharded-prefix   YAML prefix under yamls/ for the sharded run (default: individual_federated_sharded).
+  --conda-env        Conda env to activate before running.
+  --hf-home          Override HF_HOME for dataset/model cache.
+  --long-id          Override long-run id (default: <pipe-id>_long).
+  --sharded-id       Override sharded-run id (default: <pipe-id>_sharded).
+  -h, --help         Show this message.
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --skip-train)
+      SKIP_TRAIN=1
+      shift
+      ;;
+    --skip-eval)
+      SKIP_EVAL=1
+      shift
+      ;;
+    --resume)
+      RESUME=1
+      shift
+      ;;
+    --gpus)
+      GPUS="$2"
+      shift 2
+      ;;
+    --pipe-id)
+      PIPE_ID="$2"
+      shift 2
+      ;;
+    --eval-id)
+      EVAL_ID="$2"
+      shift 2
+      ;;
+    --train-opts)
+      TRAIN_OPTS="$2"
+      shift 2
+      ;;
+    --data-root)
+      DATA_ROOT="$2"
+      shift 2
+      ;;
+    --eval-max-samples)
+      EVAL_MAX_SAMPLES="$2"
+      shift 2
+      ;;
+    --long-prefix)
+      LONG_CFG_PREFIX="$2"
+      shift 2
+      ;;
+    --sharded-prefix)
+      SHARDED_CFG_PREFIX="$2"
+      shift 2
+      ;;
+    --conda-env)
+      CONDA_ENV="$2"
+      shift 2
+      ;;
+    --hf-home)
+      HF_HOME_OVERRIDE="$2"
+      shift 2
+      ;;
+    --long-id)
+      LONG_ID="$2"
+      shift 2
+      ;;
+    --sharded-id)
+      SHARDED_ID="$2"
+      shift 2
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+if [[ -z "$PIPE_ID" ]]; then
+  PIPE_ID="individual_combo_$(date +%Y%m%d_%H%M%S)_$RANDOM"
+fi
+if [[ -z "$EVAL_ID" ]]; then
+  EVAL_ID="eval_${PIPE_ID}"
+fi
+if [[ -z "$LONG_ID" ]]; then
+  LONG_ID="${PIPE_ID}_long"
+fi
+if [[ -z "$SHARDED_ID" ]]; then
+  SHARDED_ID="${PIPE_ID}_sharded"
+fi
+
+COMBO_LOG_DIR="$ROOT_DIR/individual_combo_logs/$PIPE_ID"
+PIPE_LOG="$COMBO_LOG_DIR/pipeline.log"
+STATUS_FILE="$COMBO_LOG_DIR/status.tsv"
+mkdir -p "$COMBO_LOG_DIR"
+: > "$PIPE_LOG"
+printf "phase\tpipeline\tlabel\tgpu\tstatus\tstart\tend\tlog\n" > "$STATUS_FILE"
+
+if [[ -n "$HF_HOME_OVERRIDE" ]]; then
+  export HF_HOME="$HF_HOME_OVERRIDE"
+elif [[ -z "${HF_HOME:-}" ]]; then
+  export HF_HOME="/home/heck2/sbhansali8/HFcache"
+fi
+export PYTHONUNBUFFERED=1
+
+ensure_conda_libs() {
+  if [[ -n "${CONDA_PREFIX:-}" ]]; then
+    local conda_lib="$CONDA_PREFIX/lib"
+    if [[ -d "$conda_lib" ]]; then
+      case ":${LD_LIBRARY_PATH:-}:" in
+        *":$conda_lib:"*) ;;
+        *) export LD_LIBRARY_PATH="$conda_lib:${LD_LIBRARY_PATH:-}" ;;
+      esac
+    fi
+  fi
+}
+
+maybe_activate_conda() {
+  local env_name="$1"
+  if [[ -z "$env_name" ]]; then
+    return 0
+  fi
+  if command -v conda >/dev/null 2>&1; then
+    # shellcheck disable=SC1091
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    conda activate "$env_name"
+    return 0
+  fi
+  local conda_bin="/nethome/sbhansali8/miniconda3/bin/conda"
+  if [[ -x "$conda_bin" ]]; then
+    # shellcheck disable=SC1090
+    eval "$("$conda_bin" shell.bash hook)"
+    conda activate "$env_name"
+    return 0
+  fi
+  printf "[%s] %s\n" "$(date +"%Y-%m-%dT%H:%M:%S%z")" \
+    "conda not found; continuing without activation." >&2
+}
+
+ensure_conda_libs
+maybe_activate_conda "$CONDA_ENV"
+ensure_conda_libs
+
+GPUS="${GPUS// /}"
+IFS=',' read -r -a GPU_LIST <<< "$GPUS"
+if [[ ${#GPU_LIST[@]} -eq 0 ]]; then
+  echo "No GPUs specified." >&2
+  exit 1
+fi
+
+GPU_QUEUE_FD=""
+DRY_RUN_COUNT=0
+JOB_PIDS=()
+JOB_LABELS=()
+JOB_LOGS=()
+JOB_GPUS=()
+JOB_STARTS=()
+JOB_PHASES=()
+JOB_PIPES=()
+
+init_gpu_queue() {
+  local fifo
+  fifo="$(mktemp -u)"
+  mkfifo "$fifo"
+  exec {GPU_QUEUE_FD}<>"$fifo"
+  rm -f "$fifo"
+  for gpu in "${GPU_LIST[@]}"; do
+    printf '%s\n' "$gpu" >&"$GPU_QUEUE_FD"
+  done
+}
+
+next_dry_gpu() {
+  local gpu="${GPU_LIST[$((DRY_RUN_COUNT % ${#GPU_LIST[@]}))]}"
+  DRY_RUN_COUNT=$((DRY_RUN_COUNT + 1))
+  printf '%s' "$gpu"
+}
+
+acquire_gpu() {
+  local gpu
+  read -r gpu <&"$GPU_QUEUE_FD"
+  printf '%s' "$gpu"
+}
+
+release_gpu() {
+  printf '%s\n' "$1" >&"$GPU_QUEUE_FD"
+}
+
+ts() {
+  date +"%Y-%m-%dT%H:%M:%S%z"
+}
+
+log() {
+  printf "[%s] %s\n" "$(ts)" "$*" | tee -a "$PIPE_LOG" >&2
+}
+
+record_status() {
+  local phase="$1"
+  local pipeline="$2"
+  local label="$3"
+  local gpu="$4"
+  local status="$5"
+  local start_ts="$6"
+  local end_ts="$7"
+  local log_file="$8"
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+    "$phase" "$pipeline" "$label" "$gpu" "$status" \
+    "$start_ts" "$end_ts" "$log_file" >> "$STATUS_FILE"
+}
+
+run_job() {
+  local phase="$1"
+  local pipeline="$2"
+  local label="$3"
+  local log_file="$4"
+  shift 4
+
+  local start_ts
+  start_ts="$(ts)"
+  if [[ $DRY_RUN -eq 1 ]]; then
+    local gpu
+    gpu="$(next_dry_gpu)"
+    log "DRY-RUN [$phase][$pipeline] $label gpu=$gpu cmd: $*"
+    record_status "$phase" "$pipeline" "$label" "$gpu" \
+      "dry-run" "$start_ts" "$start_ts" "$log_file"
+    return 0
+  fi
+
+  local gpu
+  gpu="$(acquire_gpu)"
+  : > "$log_file"
+  (
+    set -euo pipefail
+    cleanup() {
+      local status=$?
+      set +e
+      release_gpu "$gpu"
+      printf "[%s] END status=%s\n" "$(ts)" "$status" >> "$log_file"
+      exit "$status"
+    }
+    trap cleanup EXIT
+    printf "[%s] START gpu=%s\n" "$(ts)" "$gpu" >> "$log_file"
+    printf "[%s] CMD: %s\n" "$(ts)" "$*" >> "$log_file"
+    ensure_conda_libs
+    export CUDA_VISIBLE_DEVICES="$gpu"
+    "$@" >> "$log_file" 2>&1
+  ) &
+  local pid=$!
+  JOB_PIDS+=("$pid")
+  JOB_LABELS+=("$label")
+  JOB_LOGS+=("$log_file")
+  JOB_GPUS+=("$gpu")
+  JOB_STARTS+=("$start_ts")
+  JOB_PHASES+=("$phase")
+  JOB_PIPES+=("$pipeline")
+}
+
+remove_job_at_index() {
+  local idx="$1"
+  unset 'JOB_PIDS[idx]'
+  unset 'JOB_LABELS[idx]'
+  unset 'JOB_LOGS[idx]'
+  unset 'JOB_GPUS[idx]'
+  unset 'JOB_STARTS[idx]'
+  unset 'JOB_PHASES[idx]'
+  unset 'JOB_PIPES[idx]'
+  JOB_PIDS=("${JOB_PIDS[@]}")
+  JOB_LABELS=("${JOB_LABELS[@]}")
+  JOB_LOGS=("${JOB_LOGS[@]}")
+  JOB_GPUS=("${JOB_GPUS[@]}")
+  JOB_STARTS=("${JOB_STARTS[@]}")
+  JOB_PHASES=("${JOB_PHASES[@]}")
+  JOB_PIPES=("${JOB_PIPES[@]}")
+}
+
+wait_jobs() {
+  local filter_phase="${1:-}"
+  local failures=0
+  if [[ ${#JOB_PIDS[@]} -eq 0 ]]; then
+    return 0
+  fi
+  local completed_indices=()
+  for idx in "${!JOB_PIDS[@]}"; do
+    if [[ -n "$filter_phase" && "${JOB_PHASES[$idx]}" != "$filter_phase" ]]; then
+      continue
+    fi
+    local pid="${JOB_PIDS[$idx]}"
+    local label="${JOB_LABELS[$idx]}"
+    local log_file="${JOB_LOGS[$idx]}"
+    local gpu="${JOB_GPUS[$idx]}"
+    local start_ts="${JOB_STARTS[$idx]}"
+    local phase="${JOB_PHASES[$idx]}"
+    local pipeline="${JOB_PIPES[$idx]}"
+    local status=0
+    if wait "$pid"; then
+      status=0
+    else
+      status=$?
+      failures=$((failures + 1))
+    fi
+    local end_ts
+    end_ts="$(ts)"
+    record_status "$phase" "$pipeline" "$label" "$gpu" \
+      "$status" "$start_ts" "$end_ts" "$log_file"
+    if [[ $status -ne 0 ]]; then
+      log "Job failed: $label ($pipeline, gpu=$gpu, log=$log_file)"
+    else
+      log "Job finished: $label ($pipeline, gpu=$gpu)"
+    fi
+    completed_indices+=("$idx")
+  done
+  for ((i=${#completed_indices[@]}-1; i>=0; i--)); do
+    remove_job_at_index "${completed_indices[$i]}"
+  done
+  if [[ $failures -ne 0 ]]; then
+    return 1
+  fi
+  return 0
+}
+
+WAITED_JOB_LABEL=""
+WAITED_JOB_STATUS=0
+WAITED_JOB_PIPE=""
+WAITED_JOB_GPU=""
+WAITED_JOB_LOG=""
+
+wait_for_any_train_job() {
+  while true; do
+    for idx in "${!JOB_PIDS[@]}"; do
+      if [[ "${JOB_PHASES[$idx]}" != "train" ]]; then
+        continue
+      fi
+      local pid="${JOB_PIDS[$idx]}"
+      if kill -0 "$pid" 2>/dev/null; then
+        continue
+      fi
+      local label="${JOB_LABELS[$idx]}"
+      local log_file="${JOB_LOGS[$idx]}"
+      local gpu="${JOB_GPUS[$idx]}"
+      local start_ts="${JOB_STARTS[$idx]}"
+      local pipeline="${JOB_PIPES[$idx]}"
+      local status=0
+      if wait "$pid"; then
+        status=0
+      else
+        status=$?
+      fi
+      local end_ts
+      end_ts="$(ts)"
+      record_status "train" "$pipeline" "$label" "$gpu" \
+        "$status" "$start_ts" "$end_ts" "$log_file"
+      if [[ $status -ne 0 ]]; then
+        log "Job failed: $label ($pipeline, gpu=$gpu, log=$log_file)"
+      else
+        log "Job finished: $label ($pipeline, gpu=$gpu)"
+      fi
+      WAITED_JOB_LABEL="$label"
+      WAITED_JOB_STATUS="$status"
+      WAITED_JOB_PIPE="$pipeline"
+      WAITED_JOB_GPU="$gpu"
+      WAITED_JOB_LOG="$log_file"
+      remove_job_at_index "$idx"
+      return 0
+    done
+    sleep 1
+  done
+}
+
+find_ckpt() {
+  local result_dir="$1"
+  local exp="$2"
+  local base="$result_dir/$exp/train"
+  if [[ -f "$base/final_ckpt.ckpt" ]]; then
+    printf '%s' "$base/final_ckpt.ckpt"
+  elif [[ -f "$base/ckpt.ckpt" ]]; then
+    printf '%s' "$base/ckpt.ckpt"
+  else
+    printf ''
+  fi
+}
+
+has_eval_result() {
+  local res_dir="$1"
+  if [[ ! -d "$res_dir" ]]; then
+    return 1
+  fi
+  if find "$res_dir" -type f -name "accuracies_*.json" -print -quit | grep -q .; then
+    return 0
+  fi
+  return 1
+}
+
+if [[ $DRY_RUN -eq 0 ]]; then
+  init_gpu_queue
+fi
+
+PIPELINES=(long sharded)
+EXPS=(fedavg bank_perclient centralized)
+TASKS=(gsm8k hellaswag piqa xsum hotpotqa mbpp apps toolbench)
+
+declare -A PIPE_CFG_PREFIX
+declare -A PIPE_RESULT_DIR
+declare -A PIPE_LOG_DIR
+declare -A PIPE_EVAL_ID
+
+PIPE_CFG_PREFIX[long]="$LONG_CFG_PREFIX"
+PIPE_RESULT_DIR[long]="$ROOT_DIR/individual_results/$LONG_ID"
+PIPE_LOG_DIR[long]="$ROOT_DIR/individual_logs/$LONG_ID"
+PIPE_EVAL_ID[long]="${EVAL_ID}_long"
+
+PIPE_CFG_PREFIX[sharded]="$SHARDED_CFG_PREFIX"
+PIPE_RESULT_DIR[sharded]="$ROOT_DIR/individual_sharded_results/$SHARDED_ID"
+PIPE_LOG_DIR[sharded]="$ROOT_DIR/individual_sharded_logs/$SHARDED_ID"
+PIPE_EVAL_ID[sharded]="${EVAL_ID}_sharded"
+
+for pipe in "${PIPELINES[@]}"; do
+  mkdir -p "${PIPE_LOG_DIR[$pipe]}" "${PIPE_RESULT_DIR[$pipe]}"
+  : > "${PIPE_LOG_DIR[$pipe]}/pipeline.log"
+  printf "phase\tlabel\tgpu\tstatus\tstart\tend\tlog\n" > "${PIPE_LOG_DIR[$pipe]}/status.tsv"
+  log "Initialized $pipe pipeline: results=${PIPE_RESULT_DIR[$pipe]}, logs=${PIPE_LOG_DIR[$pipe]}"
+  log "Eval id for $pipe: ${PIPE_EVAL_ID[$pipe]}"
+  log "Config prefix for $pipe: ${PIPE_CFG_PREFIX[$pipe]}"
+  log "Data root: $DATA_ROOT"
+  log "GPU list: ${GPUS}"
+  log "Eval max samples: ${EVAL_MAX_SAMPLES:-200}"
+  log "Train opts: ${TRAIN_OPTS:-<none>}"
+  log "Resume: $RESUME"
+  log "Skip train: $SKIP_TRAIN"
+  log "Skip eval: $SKIP_EVAL"
+  log "Dry run: $DRY_RUN"
+  log "HF_HOME: ${HF_HOME}"
+  log "Conda env: ${CONDA_ENV:-<none>}"
+  log "Run id: $PIPE_ID"
+  log "Long id: $LONG_ID"
+  log "Sharded id: $SHARDED_ID"
+  log "---"
+
+done
+
+BASE_TRAIN_OPTS="data.tulu3_federated.root ${DATA_ROOT#data/}"
+if [[ -n "$TRAIN_OPTS" ]]; then
+  FULL_TRAIN_OPTS="${BASE_TRAIN_OPTS}::${TRAIN_OPTS}"
+else
+  FULL_TRAIN_OPTS="$BASE_TRAIN_OPTS"
+fi
+TRAIN_OPT_ARGS=()
+read -r -a TRAIN_OPT_ARGS <<< "${FULL_TRAIN_OPTS//::/ }"
+
+TOTAL_FAILURES=0
+train_jobs=0
+
+declare -A EVAL_SCHEDULED
+
+enqueue_eval_jobs() {
+  local pipe="$1"
+  local exp="$2"
+  local key="$pipe:$exp"
+  if [[ -n "${EVAL_SCHEDULED[$key]:-}" ]]; then
+    return 0
+  fi
+  local ckpt_path
+  ckpt_path="$(find_ckpt "${PIPE_RESULT_DIR[$pipe]}" "$exp")"
+  if [[ -z "$ckpt_path" ]]; then
+    log "No checkpoint found for $pipe/$exp; skipping eval."
+    EVAL_SCHEDULED["$key"]=1
+    return 0
+  fi
+
+  for task in "${TASKS[@]}"; do
+    local res_dir="${PIPE_RESULT_DIR[$pipe]}/global/$exp/$task/${PIPE_EVAL_ID[$pipe]}"
+    if [[ $RESUME -eq 1 ]] && has_eval_result "$res_dir"; then
+      log "Skipping eval for $pipe/$exp/$task (results exist)."
+      local ts_now
+      ts_now="$(ts)"
+      record_status "eval" "$pipe" "eval-$pipe-$exp-$task" "-" \
+        "skipped" "$ts_now" "$ts_now" "${PIPE_LOG_DIR[$pipe]}/eval_${exp}_${task}.log"
+      continue
+    fi
+    mkdir -p "$res_dir"
+    local eval_log="${PIPE_LOG_DIR[$pipe]}/eval_${exp}_${task}.log"
+    local eval_yaml="$res_dir/eval_${exp}_${task}.yaml"
+    local max_samples=200
+    if [[ -n "$EVAL_MAX_SAMPLES" ]]; then
+      max_samples="$EVAL_MAX_SAMPLES"
+    fi
+    local mmlu_max_samples_per_subject=2
+    local max_new_tokens=64
+    local num_completions=1
+    local timeout_sec=5
+    case "$task" in
+      gsm8k)
+        max_new_tokens=256
+        ;;
+      hellaswag|piqa)
+        max_new_tokens=8
+        ;;
+      xsum)
+        max_new_tokens=128
+        ;;
+      hotpotqa)
+        max_new_tokens=32
+        ;;
+      mbpp|apps|toolbench)
+        max_new_tokens=256
+        ;;
+    esac
+    cat > "$eval_yaml" <<'EVAL_CFG'
+use_gpu: True
+device: 0
+outdir: "__RES_DIR__/exp"
+federate:
+  save_to: "__CKPT__"
+model:
+  type: "meta-llama/Llama-2-7b-hf@huggingface_llm"
+llm:
+  tok_len: 2048
+  adapter:
+    use: True
+    args:
+      - {adapter_package: "peft", adapter_method: "lora",
+         r: 8, lora_alpha: 32, lora_dropout: 0.05,
+         target_modules: ["q_proj","k_proj","v_proj","o_proj"],
+         modules_to_save: ["embed_tokens","lm_head"]}
+train:
+  is_enable_half: False
+  precision: bf16
+  compile: False
+eval:
+  max_samples: __MAX_SAMPLES__
+  max_new_tokens: __MAX_NEW_TOKENS__
+  num_completions: __NUM_COMPLETIONS__
+  timeout: __TIMEOUT__
+  max_samples_per_subject: __MMLU_SAMPLES__
+  superglue_tasks: ["boolq", "rte", "cb", "copa", "wic"]
+EVAL_CFG
+    sed -i \
+      -e "s#__RES_DIR__#$res_dir#g" \
+      -e "s#__CKPT__#$ckpt_path#g" \
+      -e "s#__MAX_SAMPLES__#$max_samples#g" \
+      -e "s#__MAX_NEW_TOKENS__#$max_new_tokens#g" \
+      -e "s#__NUM_COMPLETIONS__#$num_completions#g" \
+      -e "s#__TIMEOUT__#$timeout_sec#g" \
+      -e "s#__MMLU_SAMPLES__#$mmlu_max_samples_per_subject#g" \
+      "$eval_yaml"
+    local eval_cmd=()
+    case "$task" in
+      gsm8k)
+        eval_cmd=(python federatedscope/llm/eval/eval_for_gsm8k/eval.py --cfg "$eval_yaml")
+        ;;
+      hellaswag)
+        eval_cmd=(python federatedscope/llm/eval/eval_for_hellaswag/eval.py --cfg "$eval_yaml")
+        ;;
+      piqa)
+        eval_cmd=(python federatedscope/llm/eval/eval_for_piqa/eval.py --cfg "$eval_yaml")
+        ;;
+      xsum)
+        eval_cmd=(python federatedscope/llm/eval/eval_for_xsum/eval.py --cfg "$eval_yaml")
+        ;;
+      hotpotqa)
+        eval_cmd=(python federatedscope/llm/eval/eval_for_hotpotqa/eval.py --cfg "$eval_yaml")
+        ;;
+      mbpp)
+        eval_cmd=(python federatedscope/llm/eval/eval_for_mbpp/eval.py --cfg "$eval_yaml")
+        ;;
+      apps)
+        eval_cmd=(python federatedscope/llm/eval/eval_for_apps/eval.py --cfg "$eval_yaml")
+        ;;
+      toolbench)
+        eval_cmd=(python federatedscope/llm/eval/eval_for_toolbench/eval.py --cfg "$eval_yaml")
+        ;;
+      *)
+        log "Unknown task: $task"
+        continue
+        ;;
+    esac
+    run_job "eval" "$pipe" "eval-$pipe-$exp-$task" "$eval_log" \
+      bash -c "TMP_BASE='${PIPE_RESULT_DIR[$pipe]}/tmp'; \
+        mkdir -p \"\$TMP_BASE\" '$res_dir/wandb'; \
+        export TMPDIR=\"\$TMP_BASE/${PIPE_EVAL_ID[$pipe]}_${exp}_${task}\" WANDB_DIR='$res_dir/wandb' WANDB_DISABLE_SERVICE=1; \
+        unset WANDB_SERVICE; \
+        ${eval_cmd[*]}"
+  done
+  EVAL_SCHEDULED["$key"]=1
+}
+
+if [[ $SKIP_TRAIN -eq 0 ]]; then
+  log "Launching combined training jobs..."
+  for exp in "${EXPS[@]}"; do
+    for pipe in "${PIPELINES[@]}"; do
+      local_result_dir="${PIPE_RESULT_DIR[$pipe]}"
+      local_log_dir="${PIPE_LOG_DIR[$pipe]}"
+      EXISTING_CKPT="$(find_ckpt "$local_result_dir" "$exp")"
+      if [[ $RESUME -eq 1 && -n "$EXISTING_CKPT" ]]; then
+        log "Skipping training for $pipe/$exp (checkpoint exists)."
+        ts_now="$(ts)"
+        record_status "train" "$pipe" "train-$pipe-$exp" "-" \
+          "skipped" "$ts_now" "$ts_now" "$local_log_dir/train_${exp}.log"
+        if [[ $SKIP_EVAL -eq 0 ]]; then
+          enqueue_eval_jobs "$pipe" "$exp"
+        fi
+        continue
+      fi
+      OUTDIR="$local_result_dir/$exp/train"
+      CKPT_PATH="$OUTDIR/ckpt.ckpt"
+      mkdir -p "$OUTDIR"
+      TRAIN_LOG="$local_log_dir/train_${exp}.log"
+      CFG="yamls/${PIPE_CFG_PREFIX[$pipe]}_${exp}.yaml"
+      run_job "train" "$pipe" "train-$pipe-$exp" "$TRAIN_LOG" \
+        bash -c "export TMPDIR='$OUTDIR/tmp' WANDB_DIR='$OUTDIR/wandb' \
+          WANDB_DISABLE_SERVICE=1 WANDB_USE=0 WANDB_DISABLED=1; \
+          mkdir -p '$OUTDIR/tmp' '$OUTDIR/wandb'; \
+          unset WANDB_SERVICE WANDB_SWEEP_ID WANDB_SWEEP_PARAM_PATH WANDB_CONFIG WANDB_RUN_ID; \
+          python federatedscope/main.py \
+            --cfg '$CFG' \
+            outdir '$OUTDIR' expname '$exp' expname_tag 'run_${PIPE_ID}_${pipe}' \
+            federate.save_to '$CKPT_PATH' \
+            ${TRAIN_OPT_ARGS[*]}"
+      if [[ $DRY_RUN -eq 0 ]]; then
+        train_jobs=$((train_jobs + 1))
+      fi
+    done
+  done
+
+  if [[ $SKIP_EVAL -eq 0 ]]; then
+    while [[ $train_jobs -gt 0 ]]; do
+      wait_for_any_train_job
+      train_jobs=$((train_jobs - 1))
+      if [[ $WAITED_JOB_STATUS -ne 0 ]]; then
+        TOTAL_FAILURES=$((TOTAL_FAILURES + 1))
+      fi
+      label="${WAITED_JOB_LABEL#train-}"
+      pipe="${label%%-*}"
+      exp="${label#${pipe}-}"
+      enqueue_eval_jobs "$pipe" "$exp"
+    done
+  else
+    if ! wait_jobs "train"; then
+      TOTAL_FAILURES=$((TOTAL_FAILURES + 1))
+    fi
+  fi
+else
+  log "Skipping training stage."
+  if [[ $SKIP_EVAL -eq 0 ]]; then
+    for exp in "${EXPS[@]}"; do
+      for pipe in "${PIPELINES[@]}"; do
+        enqueue_eval_jobs "$pipe" "$exp"
+      done
+    done
+  fi
+fi
+
+if [[ $SKIP_EVAL -eq 0 ]]; then
+  log "Waiting for evaluations..."
+  if ! wait_jobs "eval"; then
+    TOTAL_FAILURES=$((TOTAL_FAILURES + 1))
+  fi
+
+  log "Collecting metrics..."
+  for pipe in "${PIPELINES[@]}"; do
+    for exp in "${EXPS[@]}"; do
+      COLLECT_LOG="${PIPE_LOG_DIR[$pipe]}/collect_${exp}.log"
+      if [[ $DRY_RUN -eq 1 ]]; then
+        log "DRY-RUN [collect-$pipe-$exp] python scripts/collect_tulu_eval_results.py --results-root ${PIPE_RESULT_DIR[$pipe]} --exp $exp --eval-job-id ${PIPE_EVAL_ID[$pipe]}"
+        continue
+      fi
+      : > "$COLLECT_LOG"
+      COLLECT_CMD=(python scripts/collect_tulu_eval_results.py
+        --results-root "${PIPE_RESULT_DIR[$pipe]}"
+        --exp "$exp"
+        --eval-job-id "${PIPE_EVAL_ID[$pipe]}"
+      )
+      if [[ "$exp" == "bank_perclient" ]]; then
+        COLLECT_CMD+=(--fedavg-eval-job-id "${PIPE_EVAL_ID[$pipe]}")
+      fi
+      log "Running metrics collection for $pipe/$exp (log: $COLLECT_LOG)"
+      (export TMPDIR="${PIPE_RESULT_DIR[$pipe]}/tmp" WANDB_DIR="${PIPE_RESULT_DIR[$pipe]}/wandb" WANDB_DISABLE_SERVICE=1; \
+        mkdir -p "$TMPDIR" "$WANDB_DIR"; \
+        unset WANDB_SERVICE; \
+        "${COLLECT_CMD[@]}") >> "$COLLECT_LOG" 2>&1
+    done
+  done
+else
+  log "Skipping evaluations."
+fi
+
+log "Combined individual pipeline complete."
+if [[ $DRY_RUN -eq 1 ]]; then
+  log "Dry-run requested; no jobs executed."
+fi
+if [[ $TOTAL_FAILURES -ne 0 ]]; then
+  log "Pipeline finished with failures. See $STATUS_FILE for details."
+  exit 1
+fi
