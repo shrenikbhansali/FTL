@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import random
+import re
 import shutil
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -134,8 +135,18 @@ def _format_mbpp(row: Dict[str, Any]) -> Optional[List[Dict[str, str]]]:
     code = row.get("code")
     if not text or code is None:
         return None
+    signature = None
+    match = re.search(r"^\s*def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*:",
+                      str(code),
+                      re.MULTILINE)
+    if match:
+        signature = f"def {match.group(1)}({match.group(2).strip()}):"
+    prompt = str(text).strip()
+    prompt += "\n\nWrite a Python function. Do not use input() or print()."
+    if signature:
+        prompt += f"\nFunction signature:\n{signature}"
     return [
-        {"role": "user", "content": str(text).strip()},
+        {"role": "user", "content": prompt},
         {"role": "assistant", "content": str(code).rstrip()},
     ]
 
@@ -145,7 +156,25 @@ def _format_hotpotqa(row: Dict[str, Any]) -> Optional[List[Dict[str, str]]]:
     answer = row.get("answer")
     if not question or answer is None:
         return None
-    prompt = f"{question}\nAnswer:"
+    context = row.get("context") or {}
+    titles = context.get("title") or []
+    sentences = context.get("sentences") or []
+    parts: List[str] = []
+    for title, sents in zip(titles, sentences):
+        if not sents:
+            continue
+        text = " ".join([str(s).strip() for s in sents if s])
+        if not text:
+            continue
+        if title:
+            parts.append(f"[{str(title).strip()}] {text}")
+        else:
+            parts.append(text)
+    context_block = "\n".join(parts).strip()
+    if context_block:
+        prompt = f"Context:\n{context_block}\n\nQuestion: {question}\nAnswer:"
+    else:
+        prompt = f"{question}\nAnswer:"
     return [
         {"role": "user", "content": prompt},
         {"role": "assistant", "content": str(answer).strip()},

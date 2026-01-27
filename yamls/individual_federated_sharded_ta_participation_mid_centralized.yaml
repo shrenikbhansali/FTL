@@ -1,0 +1,76 @@
+use_gpu: True
+device: 0
+seed: 42
+
+federate:
+  mode: standalone
+  total_round_num: 80
+  client_num: 1
+  share_local_model: True
+  method: FedAvg
+  save_to: "ckpts/full/individual_federated_sharded_ta_participation_mid_centralized.ckpt"
+
+data:
+  root: data/
+  type: tulu3_federated
+  tulu3_federated:
+    root: individual_federated
+    manifest: manifest.json
+    merge_clients: True
+    clients: []
+
+model:
+  type: "meta-llama/Llama-2-7b-hf@huggingface_llm"
+
+llm:
+  tok_len: 2048
+  chat:
+    max_len: 512
+    max_history_len: 0
+  adapter:
+    use: True
+    args:
+      - {
+          adapter_package: "peft",
+          adapter_method: "lora",
+          r: 8,
+          lora_alpha: 32,
+          lora_dropout: 0.05,
+          target_modules: ["q_proj","k_proj","v_proj","o_proj"],
+          modules_to_save: ["embed_tokens","lm_head"]
+        }
+
+trainer:
+  type: llmtrainer
+
+train:
+  local_update_steps: 100
+  batch_or_epoch: batch
+  is_enable_half: False
+  precision: bf16
+  optimizer:
+    type: Adam
+    lr: 2.0e-5
+    betas: [0.9, 0.95]
+    eps: 1.0e-5
+
+dataloader:
+  batch_size: 1
+
+grad:
+  grad_clip: 1.0
+
+eval:
+  freq: 100000000
+  metrics: []
+  split: []
+  report: ["raw"]
+  best_res_update_round_wise_key: "val_loss"
+  count_flops: False
+
+wandb:
+  use: True
+  name_user: "sbhansali8-georgia-institute-of-technology"
+  name_project: "FTL-Dev"
+  online_track: True
+  client_train_info: False

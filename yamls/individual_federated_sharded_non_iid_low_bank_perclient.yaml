@@ -1,0 +1,112 @@
+use_gpu: True
+device: 0
+seed: 42
+
+federate:
+  mode: standalone
+  total_round_num: 80
+  client_num: 0
+  share_local_model: True
+  save_to: "ckpts/full/individual_federated_sharded_non_iid_low_bank_perclient.ckpt"
+  sample_client_rate: 0.25
+  sample_client_num: -1
+
+data:
+  root: data/
+  type: tulu3_federated
+  tulu3_federated:
+    root: individual_federated
+    manifest: manifest.json
+    clients: []
+    sharding:
+      enable: True
+      spec: "gsm8k_client=10,hellaswag_client=4,xsum_client=6,hotpotqa_client=6,mbpp_client=4"
+      default_shards: 6
+      seed: 42
+
+model:
+  type: "meta-llama/Llama-2-7b-hf@huggingface_llm"
+
+llm:
+  tok_len: 2048
+  chat:
+    max_len: 512
+    max_history_len: 0
+  adapter:
+    use: True
+    args:
+      - {
+          adapter_package: "peft",
+          adapter_method: "lora",
+          r: 8,
+          lora_alpha: 32,
+          lora_dropout: 0.05,
+          target_modules: ["q_proj","k_proj","v_proj","o_proj"],
+          modules_to_save: ["embed_tokens","lm_head"]
+        }
+
+aggregator:
+  type: "unlearn_fedavg"
+  unlearn:
+    enable: True
+    mode: "shrink"
+    lambda_shrink: 1.0
+    beta_shared: 0.2
+    alpha_global: 1.0
+    only_lora: True
+    target_modules: ["q_proj","k_proj","v_proj","o_proj"]
+    proj_dtype: "float32"
+    chunk_rows: 4096
+    send_Q_to_clients: True
+    log_stats: True
+    bank:
+      enable: True
+      r_global: 1
+      r_client: 12
+      beta_global: 0.65
+      beta_resid: 0.15
+      energy_target: 0.0
+      bank_send_per_client: True
+      bank_proj_mode: "others_private"
+      bank_proj_rank_max: 0
+
+trainer:
+  type: llmtrainer
+
+train:
+  local_update_steps: 200
+  batch_or_epoch: batch
+  is_enable_half: False
+  precision: bf16
+  cleanup_optimizer_state: True
+  cleanup_cuda_cache: True
+  unlearn:
+    project_grads: True
+    proj_rho: 1.0
+    bank_use_per_client: True
+  optimizer:
+    type: Adam
+    lr: 2.0e-4
+    betas: [0.9, 0.95]
+    eps: 1.0e-5
+
+dataloader:
+  batch_size: 1
+
+grad:
+  grad_clip: 1.0
+
+eval:
+  freq: 100000000
+  metrics: []
+  split: []
+  report: ["raw"]
+  best_res_update_round_wise_key: "val_loss"
+  count_flops: False
+
+wandb:
+  use: True
+  name_user: "sbhansali8-georgia-institute-of-technology"
+  name_project: "FTL-Dev"
+  online_track: True
+  client_train_info: False

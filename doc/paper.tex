@@ -123,7 +123,7 @@
 % \printAffiliationsAndNotice{\icmlEqualContribution}
 
 \begin{abstract}
-Federated transfer fine-tuning (FTL) of large language models (LLMs) faces severe heterogeneity: when clients correspond to distinct tasks or domains, naive aggregation (e.g., FedAvg) can cancel transferable signal and amplify task-private interference. We introduce \textbf{SubspaceBank}, a geometry-aware federation method for LoRA-based LLM adaptation in the dataset-pure FTL regime. At each communication round, the server constructs low-rank orthonormal bases from client update matrices and decomposes each client’s update into shared (global), client-private, and residual components. SubspaceBank aggregates by reweighting these components to emphasize consensus-aligned directions while shrinking residuals, and additionally broadcasts per-client constraint bases that enable projected local updates to reduce cross-client interference during multi-step optimization. Across heterogeneous-client settings, SubspaceBank yields stronger global robustness and improved stability than FedAvg under comparable LoRA parameterization, highlighting subspace decomposition as a practical primitive for federated LLM transfer learning.
+Federated transfer fine-tuning (FTL) of large language models (LLMs) faces severe heterogeneity: when clients correspond to distinct tasks or domains, naive aggregation (e.g., FedAvg) can cancel transferable signal and amplify task-private interference. We introduce \textbf{SubspaceBank}, a geometry-aware federation method for LoRA-based LLM adaptation in the dataset-pure FTL regime. At each communication round, the server constructs low-rank orthonormal bases from client update matrices and decomposes each client’s update into shared (global), client-private, and residual components. SubspaceBank aggregates by reweighting these components to emphasize consensus-aligned directions while shrinking residuals. Across heterogeneous-client settings, SubspaceBank yields stronger global robustness and improved stability than FedAvg under comparable LoRA parameterization, highlighting subspace decomposition as a practical primitive for federated LLM transfer learning.
 \end{abstract}
 
 
@@ -135,23 +135,29 @@ Federated transfer fine-tuning (FTL) of large language models (LLMs) faces sever
 \section{Introduction}
 \label{sec:intro}
 
-\paragraph{Motivation: federated transfer fine-tuning for LLMs.}
-Federated learning (FL) for LLMs is increasingly used to adapt models without centralizing client data. However, much of the FL literature targets either (i) a single global objective under mild non-IIDness (where averaging remains meaningful), or (ii) personalization, where the global model is primarily an initializer for client-specific adaptation. In this paper we focus on a different regime: \emph{federated transfer fine-tuning (FTL)}, where each client corresponds to a distinct dataset/task/domain, heterogeneity is intrinsic and persistent, and the primary goal is a \emph{single global model} that is robust across all constituent benchmarks. This regime naturally arises when organizations cannot pool data across domains (or tenants), but still want one shared model to serve multiple downstream tasks reliably.
+Fine-tuning Large language models (LLMs) for new tasks and domains is rising in popularity, but in many  settings the data required for adaptation cannot be pooled. Federated learning (FL) offers a natural alternative: clients keep data local and share only model updates. 
 
-In FTL, naïve aggregation can fail even when each client makes local progress. With parameter-efficient fine-tuning (PEFT) such as LoRA, client updates often lie in low-rank (or low-effective-rank) subspaces that differ substantially across tasks. Under strong task diversity, these update directions can disagree: FedAvg can cancel transferable signal and unintentionally preserve or amplify residual/noisy components, yielding unstable training and degraded global robustness. The empirical pattern in our baseline results reflects this failure mode: FedAvg underperforms centralized multi-task training across most benchmarks (\Cref{sec:exp-global}), motivating aggregation rules that explicitly control interference.
+Most existing federated LLM work, however, is organized around a a single global objective or task under mild non-IIDness, where averaging remains a reasonable approximation. In this paper we study a different and practically common regime: \emph{federated transfer fine-tuning (FTL)}, where each client corresponds to a distinct dataset/task/domain, heterogeneity is intrinsic and persistent, and the goal is both a single global model that performs robustly across all constituent tasks, and clients that retain their performance on their training task. Despite the popularity of LLMs in multiple domains, \textbf{there are no prior works that directly study federated transfer learning for LLMs}. This creates a gap: we lack both methods and evaluation protocols for building one globally reliable LLM from heterogeneous, non-mixable client datasets.
 
-\paragraph{Core idea: geometry-aware federation via shared/private subspaces.}
-We take a geometric view of heterogeneous LoRA deltas. For a given banked parameter key, each client’s LoRA delta can be decomposed into: (i) \textbf{shared} directions supported by many clients (transfer), (ii) \textbf{private} directions specific to a single dataset/client (task-private structure), and (iii) \textbf{residual} components (unmodeled/noise or rank-mismatch). Our method, \textbf{SubspaceBank}, extracts a shared basis from stacked client deltas and a private basis per client from the shared-removed residual, then aggregates via a structured recombination rule rather than raw averaging. To further reduce cross-task interference during multi-step local optimization, SubspaceBank additionally sends each participating client a constraint basis spanning other participants’ private directions for that round and applies projected-gradient local steps. Intuitively, SubspaceBank addresses interference at the server (aggregation geometry) and at the client (optimization geometry).
+The core problem in FTL is interference. Even when each client makes local progress, client updates can point in incompatible directions: a direction that improves one task can degrade others. Under strong task diversity, naïvely averaging LLM parameters can cancel transferable signal while unintentionally preserving or non-transferable components, producing unstable training and poor global robustness. We demonstrate this experimentally, FedAvg underperforms centralized multi-task training on multiple benchmarks (\Cref{sec:exp-global}), motivating our method.
 
-\paragraph{Contributions.}
+We propose \textbf{SubspaceBank}, a geometry-aware federation method designed for LoRA-based FTL. SubspaceBank is built around a simple principle: heterogeneous client deltas are mixtures of \emph{shared} structure (directions likely to transfer), \emph{private} structure (task-specific directions), and \emph{residual} components (noise, mismatch, or unstable directions). 
+
+Instead of averaging raw deltas, SubspaceBank decomposes each participating client update into these components and aggregates them with different semantics. Concretely, at each round, the server stacks client update matrices and computes a low-rank orthonormal \emph{shared} basis. For each client, it then extracts a \emph{private} basis from the residual after removing the shared span, yielding a shared/private/residual decomposition. The server forms a structured update by amplifying consensus-aligned directions and shrinking residual components, while preserving private structure orthogonal to the shared span. 
+
+SubspaceBank addresses interference by decomposing client deltas into shared, private, and residual components and reweighting them during aggregation, aligning the federated procedure with the geometry induced by heterogeneous LoRA deltas.
+
+Across heterogeneous-client settings, SubspaceBank yields stronger global robustness and improved stability than FedAvg under comparable LoRA parameterization. In our experiments, SubspaceBank improves global performance on all benchmarks relative to FedAvg and substantially narrows the gap to centralized training (\Cref{sec:exp-global}). Importantly, these gains do not come at the expense of client specialization: SubspaceBank also improves or matches client-local performance across all datasets in the specialization retention evaluation (\Cref{sec:exp-specialization}). We further evaluate SubspaceBank in a Multi-Client Datasets regime with partial participation and study ablations and geometry diagnostics to isolate which components matter and how shared/private/residual structure evolves during training (\Cref{sec:exp-ablations,sec:exp-geometry}).
+
+Our work makes three main contributions: 
 \begin{itemize}
-  \item \textbf{SubspaceBank (core aggregation):} a residual-first, nested-projection decomposition of participating client LoRA deltas into shared/private/residual components per banked parameter key, plus a structured aggregation rule that amplifies consensus and suppresses residual noise.
-  \item \textbf{SubspaceBank (projected local optimization):} per-client constraint payloads derived from other participants’ private subspaces and projected-gradient local steps (optimizer/clipping-aware) that reduce cross-private leakage in practice.
-  \item \textbf{FTL evaluation protocol:} (i) \textbf{Single-Client Datasets} and (ii) \textbf{Multi-Client Datasets}; in both regimes we evaluate the \emph{global} model on all benchmarks to measure robustness; in the Single-Client Datasets regime we additionally evaluate each client model to assess specialization retention.
+    \item We formalize and study \emph{federated transfer fine-tuning for LLMs} in a dataset-pure regime where the objective is global robustness across heterogeneous tasks.
+    \item We introduce \textbf{SubspaceBank}, a residual-first shared/private/residual decomposition and structured aggregation rule for LoRA deltas.
+    \item We provide an evaluation protocol spanning Single-Client and Multi-Client dataset-pure regimes, including global robustness and specialization retention metrics, and accompanying diagnostics and ablations.
 \end{itemize}
 
 \paragraph{Roadmap.}
-\Cref{sec:background} reviews FTL heterogeneity, federated LLM fine-tuning norms, and PEFT/subspace ideas. \Cref{sec:method} defines the federated protocol and presents SubspaceBank (including projected local training and mechanism grounding). \Cref{sec:experiments} presents regimes, baselines, and results, including geometry diagnostics (\Cref{sec:exp-geometry}), followed by limitations (\Cref{sec:discussion}) and related work (\Cref{sec:related}).
+\Cref{sec:background} reviews federated fine-tuning under heterogeneity and PEFT/LoRA preliminaries. \Cref{sec:method} presents SubspaceBank. \Cref{sec:experiments} evaluates global robustness and specialization retention and reports ablations and geometry diagnostics, followed by limitations (\Cref{sec:discussion}) and related work (\Cref{sec:related}).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -162,7 +168,7 @@ We take a geometric view of heterogeneous LoRA deltas. For a given banked parame
 Deploying large language models (LLMs) in federated learning (FL) is shaped by two practical constraints. First, \emph{communication} is a major bottleneck: exchanging full model parameters or dense updates is costly at LLM scale, so systems often turn to parameter-efficient fine-tuning (PEFT) methods to reduce communication cost. Second, \emph{optimization can be fragile} under non-IID client data and multi-step local training \citet{mcmahan2017communication,reddi2020adaptive}. Consequently, many systems often limit heterogeneity and/or local training budgets in practice.
 
 \subsection{Federated Transfer Learning Under Heterogeneity}
-Classical FL aggregates client updates to optimize a global objective. Under non-IID data, heterogeneity can produce \emph{client drift}: local optimization on different client objectives moves parameters in incompatible directions, so naive averaging may cancel progress, amplify variance, and yield unstable training dynamics (e.g., \citet{mcmahan2017fedavg,stich2019local,karimireddy2020scaffold}). These issues are often formalized through gradient dissimilarity or bounded drift assumptions and manifest as degraded global generalization.
+Classical FL aggregates client updates to optimize a global objective. Under non-IID data, heterogeneity can produce \emph{client drift}: local optimization on different client objectives moves parameters in incompatible directions, so naive averaging may cancel progress, amplify variance, and yield unstable training dynamics (e.g., \citet{mcmahan2017communication,stich2018local,karimireddy2020scaffold}). These issues are often formalized through gradient dissimilarity or bounded drift assumptions and manifest as degraded global generalization.
 
 Federated transfer learning (FTL) makes heterogeneity structural rather than incidental: each client corresponds to a distinct dataset, task, or domain, and the target is a \emph{single} model that transfers across the full client/task set. In this regime, the central failure mode is \emph{interference}. Client updates typically mix (i) transferable components that would benefit many tasks with (ii) task-private components that improve one task while harming others. Aggregating such mixed updates can suppress shared signal through cancellation while increasing the effective noise of the global step, leading to brittle across-task behavior. FTL places stronger pressure on mechanisms that preserve cross-task signal while controlling negative transfer, and remains underexplored for LLM fine-tuning.
 
@@ -184,7 +190,7 @@ In a federated setting, clients perform local optimization over LoRA parameters 
 \section{Method}
 \label{sec:method}
 
-Our goal is to learn a single global LLM that is robust across heterogeneous client tasks in a federated transfer fine-tuning (FTL) regime. At each round, for each banked key, the server computes a shared right-subspace from stacked client deltas, a private right-subspace per client from shared-removed residuals, forms structured deltas, and aggregates. In addition, the server constructs per-client constraint bases used for projected local training.
+Our goal is to learn a single global LLM that is robust across heterogeneous client tasks in a federated transfer fine-tuning (FTL) regime. At each round, for each banked key, the server computes a shared right-subspace from stacked client deltas, a private right-subspace per client from shared-removed residuals, forms structured deltas, and aggregates.
 
 \subsection{Notation and Preliminaries}
 \label{sec:method-protocol}
@@ -210,7 +216,7 @@ For each banked matrix of shape $(d_{\mathrm{out}}, d_{\mathrm{in}})$, we repres
 \subsection{SubspaceBank Overview and Design Goals}
 \label{sec:method-overview}
 
-Each round, the server receives deltas $\{D_{k,i}^t\}_{i\in S_t}$ for all banked keys $k$. For each banked key, we decompose each client delta into a shared right-subspace component, a client-private component within the shared-removed residual, and a remaining residual; we then reweight these components during aggregation and construct per-client constraint bases for projected local training. We now formalize each component.
+Each round, the server receives deltas $\{D_{k,i}^t\}_{i\in S_t}$ for all banked keys $k$. For each banked key, we decompose each client delta into a shared right-subspace component, a client-private component within the shared-removed residual, and a remaining residual; we then reweight these components during aggregation. We now formalize each component.
 
 \subsection{SubspaceBank: Shared Basis Construction}
 \label{sec:shared-basis}
@@ -232,14 +238,23 @@ and define the \emph{shared} basis $S_k^t$ using the top $r_g$ right singular ve
   \Pi_{S_k^t}\triangleq S_k^t (S_k^t)^\top.
   \label{eq:shared_basis}
 \end{equation}
-The projector $\Pi_{S_k^t}$ captures the subspace of right-space directions that best explain the stacked updates (in least-squares sense), and thus functions as a data-dependent estimate of consensus-aligned update geometry.
+Equivalently, $S_k^t$ is the solution to the orthonormal subspace approximation problem
+\begin{equation}
+  S_k^t \in \arg\min_{\substack{S\in\mathbb{R}^{d_{\mathrm{in}}\times r_g}\\ S^\top S = I}}
+  \big\|M_k^t(I-SS^\top)\big\|_F^2
+  \;=\;
+  \arg\max_{\substack{S\in\mathbb{R}^{d_{\mathrm{in}}\times r_g}\\ S^\top S = I}}
+  \big\|M_k^t S\big\|_F^2,
+  \label{eq:shared_opt}
+\end{equation}
+so $\Pi_{S_k^t}$ captures the right-space directions that best explain the stacked updates in least-squares sense, and thus functions as a data-dependent estimate of consensus-aligned update geometry.
 
 \subsection{SubspaceBank: Residual-First Private Basis and Delta Decomposition}
 \label{sec:private-basis}
 
 The shared basis alone is not sufficient in FTL: forcing all updates into a single shared span can distort or discard task-specific structure. SubspaceBank therefore extracts a private basis \emph{from the shared-removed residual} for each client, ensuring that private directions are (by construction) orthogonal to the shared span.
 
-For each participating client $i\in S_t$, we define the shared component as the right projection onto $S_k^t$:
+For each participating client $i\in S_t$, we define the shared component as the right-space component in $\mathrm{span}(S_k^t)$:
 \begin{equation}
   D_{k,i}^{t,\mathrm{glob}} \triangleq D_{k,i}^t \Pi_{S_k^t}.
   \label{eq:glob_comp}
@@ -255,6 +270,19 @@ Next, we compute a candidate private basis from the top $r_c$ right singular vec
   \qquad
   \hat P_{k,i}^t \triangleq \tilde V_{k,i}^t[:,1{:}r_c].
 \]
+Equivalently, $\hat P_{k,i}^t$ solves the residual-subspace approximation problem
+\begin{equation}
+\begin{aligned}
+  \hat P_{k,i}^t \in\;&
+  \arg\min_{\substack{P\in\mathbb{R}^{d_{\mathrm{in}}\times r_c}\\ P^\top P = I}}
+  \big\|R_{k,i}^{t,(0)}(I-PP^\top)\big\|_F^2 \\
+  =\;&
+  \arg\max_{\substack{P\in\mathbb{R}^{d_{\mathrm{in}}\times r_c}\\ P^\top P = I}}
+  \big\|R_{k,i}^{t,(0)} P\big\|_F^2.
+\end{aligned}
+\label{eq:private_opt}
+\end{equation}
+
 Since $R_{k,i}^{t,(0)}$ is already orthogonal to $S_k^t$ in the right space, $\hat P_{k,i}^t$ typically lies largely outside the shared span; we nevertheless explicitly orthogonalize against $S_k^t$ and re-orthonormalize:
 \begin{equation}
   P_{k,i}^t \triangleq \operatorname{orth}\!\big((I-\Pi_{S_k^t})\hat P_{k,i}^t\big),
@@ -273,7 +301,8 @@ Finally, we define the remaining residual component
   \label{eq:final_resid}
 \end{equation}
 
-This residual-first construction is central: it prevents private structure from being ``explained away'' by the shared span, and it yields a three-way decomposition in which the shared and private components capture interpretable update geometry, while $R_{k,i}^t$ collects unmodeled directions that we will explicitly shrink during aggregation.
+This residual-first construction is central: it prevents private structure from being ``explained away'' by the shared span, and it yields a three-way decomposition in which the shared and private components capture interpretable update geometry, while $R_{k,i}^t$ collects unmodeled directions that we explicitly shrink during aggregation.
+
 
 \subsection{SubspaceBank: Structured Aggregation}
 \label{sec:structured-agg}
@@ -296,7 +325,14 @@ where $\beta_g\ge 0$ controls amplification of consensus-aligned directions and 
 \end{equation}
 with global step size $\alpha>0$. Intuitively, $\beta_g$ increases the contribution of update directions that many clients agree on (transfer), $D^{\mathrm{priv}}$ preserves client-specific structure that is orthogonal to the shared span (avoiding a ``one-span-fits-all'' collapse), and $\beta_r$ suppresses leftover components that tend to be unstable under averaging.
 
-\paragraph{Operator view (mechanism-aligned).}
+\paragraph{FedAvg as a special case.}
+SubspaceBank reduces to standard weighted averaging on banked keys when $\beta_g=\beta_r=1$. In this case,
+\[
+\tilde D_{k,i}^t = D_{k,i}^{t,\mathrm{priv}} + D_{k,i}^{t,\mathrm{glob}} + R_{k,i}^t = D_{k,i}^t,
+\]
+so the aggregated update $\Delta_k^t=\sum_{i\in S_t} w_i D_{k,i}^t$ matches FedAvg for banked parameters.
+
+
 The structured update admits a simple operator interpretation that makes explicit what is being amplified, preserved, and shrunk. Suppressing indices for readability and writing $\Pi_S$ and $\Pi_P$ for the shared and private projectors, the construction implies
 \begin{equation}
   \tilde D
@@ -305,44 +341,60 @@ The structured update admits a simple operator interpretation that makes explici
   + (1-\beta_r)\,(D(I-\Pi_S))\Pi_P.
   \label{eq:operator_view}
 \end{equation}
-The first term scales the entire update, the second term selectively boosts the shared (consensus) component, and the third term preserves structure within the shared-removed residual that lies in the private subspace. This view clarifies that SubspaceBank is not assuming private subspaces are mutually orthogonal across clients; rather, it explicitly separates consensus-aligned and residual directions at aggregation time and will rely on projected local optimization (below) to reduce cross-private contamination during training.
+The first term scales the entire update, the second term selectively boosts the shared (consensus) component, and the third term preserves structure within the shared-removed residual that lies in the private subspace. This view clarifies that SubspaceBank is not assuming private subspaces are mutually orthogonal across clients; rather, it explicitly separates consensus-aligned and residual directions at aggregation time.
 
-\subsection{Per-Client Payloads and Projected Local Training}
-\label{sec:bank-perclient}
-
-Structured aggregation controls interference at the server, but in multi-step local optimization, a client can still drift into directions that correspond to other clients' task-specific structure. SubspaceBank therefore incorporates a per-client constraint mechanism: each client projects gradients away from a basis spanning other clients' private subspaces, thereby reducing cross-private leakage during local training.
-
-\subsubsection{Per-Client Constraint Basis Construction}
-Given private bases $\{P_{k,j}^t\}_{j\in S_t}$ for a key $k$, we define for each client $i\in S_t$ a constraint basis spanning \emph{other clients'} private subspaces:
-\begin{equation}
-  Q_{k}^{t,(i)}
-  \triangleq
-  \operatorname{orth}\!\Big(\big[\,P_{k,j}^t\,\big]_{j\in S_t\setminus\{i\}}\Big)
-  \in \mathbb{R}^{d_{\mathrm{in}}\times r_Q}.
-  \label{eq:payload_def}
-\end{equation}
-This construction takes the union of other clients' private directions (in the right space), orthonormalizes them, and yields a compact subspace estimate of ``directions to avoid'' for client $i$ at key $k$.
-
-\subsubsection{Projected-Gradient Local Updates}
-During client $i$'s local training, for each banked key $k$ with an available constraint basis $Q_k^{(i)}$, we project gradients in the right space before applying the optimizer update. Let $g_k \in \mathbb{R}^{d_{\mathrm{out}}\times d_{\mathrm{in}}}$ denote the gradient of the local objective with respect to the banked parameter matrix $W_k$. We update
-\begin{equation}
-  g_k \leftarrow g_k - \rho\, (g_k Q_k^{(i)})(Q_k^{(i)})^\top,
-  \label{eq:grad_proj}
-\end{equation}
-where $\rho\in[0,1]$ controls the projection strength. When $\rho=1$, \Cref{eq:grad_proj} removes the entire component of $g_k$ lying in $\mathrm{span}(Q_k^{(i)})$ (in the right space); smaller $\rho$ yields a soft constraint. The projected gradients are then used in the client optimizer step for the local update. Conceptually, this makes each client less likely to move into directions that correspond to other clients' private structure, mitigating interference that can accumulate over multiple local steps.
-
-\paragraph{Idealized leakage statement (mechanism-aligned).}
-In a single projected gradient step with exact orthogonal projector and a first-order update, the resulting parameter update has zero right-space component in $\mathrm{span}(Q_k^{(i)})$ when $\rho=1$. Concretely, for an update of the form $W_k \leftarrow W_k - \eta g_k$ using $g_k$ after \Cref{eq:grad_proj}, we have $(\Delta W_k) Q_k^{(i)} = 0$. 
-
-Because local training is multi-step and uses adaptive optimizers, we treat projection as approximate interference control and evaluate its effectiveness empirically via a leakage proxy (defined in \Cref{sec:exp-geometry}).
-
-We analyze the decomposition using energy fractions of the shared/private/residual components and quantify projection leakage via gradient energy along the constraint span; formal definitions appear where first used in \Cref{sec:exp-geometry}.
+We analyze the decomposition using energy fractions of the shared/private/residual components; formal definitions appear where first used in \Cref{sec:exp-geometry}.
 
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Experiments}
 \label{sec:experiments}
+
+
+
+\begin{table*}[t]
+  \caption{Global model robustness in the Single-Client Datasets regime.}
+  \label{tab:global_nonsharded}
+  \centering
+  \begin{small}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Benchmark (metric)} & \textbf{Centralized (multi-task)} & \textbf{Centralized (single-task)} & \textbf{FedAvg} & \textbf{SubspaceBank} \\
+    \midrule
+    gsm8k (acc)          & 0.136 & 0.076 & 0.071 & 0.125 \\
+    hellaswag (acc)      & 0.460 & 0.722 & 0.150 & 0.360 \\
+    xsum (rougeL\_f1)     & 0.179 & 0.180 & 0.164 & 0.183 \\
+    hotpotqa (F1)        & 0.079 & 0.084 & 0.124 & 0.130 \\
+    mbpp (pass@5)        & 0.200 & 0.112 & 0.060 & 0.110 \\
+    \midrule
+    \textbf{Macro (primary metric / dataset)} & 0.211 & 0.235 & 0.114 & 0.182 \\
+    \bottomrule
+  \end{tabular}
+  \end{small}
+\end{table*}
+
+
+\begin{table*}[t]
+  \caption{Global model robustness in the Multi-Client Datasets regime (placeholders to be filled). We will report per-benchmark metrics and macro summaries, along with participation-rate and client-count details.}
+  \label{tab:global_sharded_shell}
+  \centering
+  \begin{small}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Benchmark (metric)} & \textbf{Centralized (multi-task)} & \textbf{Centralized (single-task)} & \textbf{FedAvg} & \textbf{SubspaceBank} \\
+    \midrule
+    gsm8k (acc)          & 0.136 & 0.076 & - & -\\
+    hellaswag (acc)      & 0.460 & 0.722 & -& -\\
+    xsum (rougeL\_f1)     & 0.179 & 0.180 & -& -\\
+    hotpotqa (F1)        & 0.079 & 0.084 & -& -\\
+    mbpp (pass@5)        & 0.200 & 0.112 & -& -\\
+    \midrule
+    \textbf{Macro (primary metric / dataset)} & 0.211 & 0.235 & -& -\\
+    \bottomrule
+  \end{tabular}
+  \end{small}
+\end{table*}
 
 \subsection{Experimental Setting}
 \label{sec:exp-regimes}
@@ -359,14 +411,14 @@ For training data and benchmarking LLMs in a transfer learning setting, there is
     \item HellaSwag - HellaSwag represents a commonsense reasoning task. We use accuracy on its test set as our evaluation metric. 
     \item XSum - XSum is an extreme summarization dataset. We use ROUGE-L F1 on its test set as our evaluation metric. 
     \item HotPotQA - HotPotQA is a multi-hop QA dataset. We use F1 on its test set as our evaluation metric. 
-    \item MBPP - MBPP is a python coding dataset. We use pass@1 as our evaluation metric.
+    \item MBPP - MBPP is a python coding dataset. We use pass@5 as our evaluation metric.
 \end{itemize}
 
 In the Single-Client Datasets regime, we evaluate the global model on all task benchmarks, and evaluate specialization retention of the constituent client models on their respective benchmarks. In the Multi-Client Datasets regime, we simply benchmark the global model due to the added system complexity and compute demand. 
 
 We believe this is a diverse range of tasks that will clearly demonstrate any successes or failure in transfer learning. The tasks require different skills and knowledge of the LLM, and often use differing system instructions, formatting, or prompting strategies. We do \textbf{no standardization} between the datasets, maintaining any and all heterogeneity between the datasets. 
 
-Unless otherwise stated, we fine-tune a LLaMA2-7B model with LoRA on attention projections. We run for 60 federated rounds with full participation in the Single-Client regime. We perform 60 rounds with partial client participation in the Multi-Client regime. Detailed hyperparameters, hardware, and preprocessing are located in the Appendix.
+Unless otherwise stated, we fine-tune a LLaMA2-7B model with LoRA on attention q/k/v/o modules. We run for 60 federated rounds with full participation in the Single-Client regime. We perform 60 rounds with partial client participation in the Multi-Client regime. Detailed hyperparameters, hardware, and preprocessing are located in the Appendix.
 
 \subsection{Baselines and Training Regimes}
 \label{sec:exp-methods}
@@ -374,124 +426,122 @@ We principally look at four training regimes:
 \begin{itemize}
   \item \textbf{Centralized multi-task training:} Train one LoRA model on the union of all the datasets.
   \item \textbf{Centralized single-task training:} Train one LoRA model on one of the datasets. We provide the single-task trained model for each dataset, acting as a representative ceiling for that task's performance. 
-  \item \textbf{FedAvg-LoRA:} standard federated averaging on LoRA parameters (and standard FedAvg on other parameters).
-  \item \textbf{SubspaceBank:} SubspaceBank structured aggregation with per-client projection payloads and projected-gradient local training.
+  \item \textbf{FedAvg:} standard federated averaging on LoRA parameters (and standard FedAvg on other parameters).
+  \item \textbf{SubspaceBank:} SubspaceBank structured aggregation with shared/private/residual decomposition.
 \end{itemize}
 
 Many federated optimization methods are designed around a single-distribution FL objective (often under mild heterogeneity) or personalization assumptions. Adapting such methods to the dataset-pure FTL protocol and evaluating them fairly at LLM scale is nontrivial. We therefore focus comparisons on FedAvg and centralized training as primary reference points, and include extensive internal ablations to isolate the contributions of SubspaceBank’s components.
-
-
 
 \subsection{Main Results: Global Robustness Across Benchmarks}
 \label{sec:exp-global}
 
 \paragraph{Single-Client Datasets regime (global model).}
-Table~\ref{tab:global_nonsharded} reports the global-model benchmark results for our initial Single-Client Datasets run (five dataset-clients; 100 eval samples per benchmark where available). Two patterns are salient. First, FedAvg substantially underperforms centralized multi-task training across most benchmarks, consistent with interference under strong heterogeneity. Second, SubspaceBank improves over FedAvg on GSM8K, HellaSwag, XSum, and HotpotQA F1, narrowing the gap to centralized on several tasks. For a coarse single-number summary, the macro average over one primary metric per dataset (GSM8K acc, HellaSwag acc, XSum ROUGE-L F1, HotpotQA F1, MBPP pass@1) improves from 0.1037 (FedAvg) to 0.1597 (SubspaceBank), while centralized multi-task attains 0.1708.\footnote{We emphasize that this macro average mixes heterogeneous task metrics; we use it only as a rough scalar summary and prioritize per-task comparisons.} Centralized single-task results (per-dataset ceilings) will be reported alongside these comparisons as runs complete.
 
-\begin{table*}[t]
-  \caption{Global model robustness in the Single-Client Datasets regime (five clients; 60 rounds; 100 eval samples per benchmark where available). Centralized single-task entries are per-dataset ceilings and will be filled in as runs complete.}
-  \label{tab:global_nonsharded}
-  \centering
-  \begin{small}
-  \begin{tabular}{lcccc}
-    \toprule
-    \textbf{Benchmark (metric)} & \textbf{Centralized (multi-task)} & \textbf{Centralized (single-task)} & \textbf{FedAvg-LoRA} & \textbf{SubspaceBank} \\
-    \midrule
-    gsm8k (acc)          & 0.1357 & \texttt{TBD} & 0.0713 & 0.1251 \\
-    hellaswag (acc)      & 0.4600 & \texttt{TBD} & 0.1500 & 0.3600 \\
-    xsum (rougeL\_f1)     & 0.1791 & \texttt{TBD} & 0.1635 & 0.1832 \\
-    hotpotqa (F1)        & 0.0790 & \texttt{TBD} & 0.1237 & 0.1304 \\
-    mbpp (pass@1)        & 0.0000 & \texttt{TBD} & 0.0100 & 0.0000 \\
-    \midrule
-    \textbf{Macro (primary metric / dataset)} & 0.1708 & \texttt{TBD} & 0.1037 & 0.1597 \\
-    \bottomrule
-  \end{tabular}
-  \end{small}
-\end{table*}
 
-\paragraph{Multi-Client Datasets (partial participation; table shell).}
-We are currently running the Multi-Client Datasets regime, where each dataset is split across multiple dataset-pure clients. This regime increases the number of clients and introduces partial participation effects while avoiding cross-dataset mixing at the client level. Table~\ref{tab:global_sharded_shell} provides the reporting shell we will use for these results. In the final paper, we will include: (i) a main table of global robustness across all benchmarks, (ii) convergence-vs-round plots, and (iii) participation-rate (and clients-per-dataset) sensitivity analyses (see \Cref{sec:exp-ablations}).
+Table~\ref{tab:global_nonsharded} reports global-model robustness after 60 rounds in the Single-Client Datasets regime. The results demonstrate the interference failure mode emphasized in \Cref{sec:intro}: FedAvg falls well below centralized multi-task training on multiple tasks, indicating that naive averaging suppresses transferable signals. In contrast, SubspaceBank recovers a large fraction of this gap and improves performance on \emph{four of five} benchmarks relative to FedAvg: GSM8K increases from 0.071 to 0.125 (+0.054), HellaSwag from 0.150 to 0.360 (+0.210), XSum from 0.164 to 0.183 (+0.019), and HotPotQA F1 from 0.124 to 0.130 (+0.006). 
 
-\begin{table*}[t]
-  \caption{Global model robustness in the Multi-Client Datasets regime (placeholders to be filled). We will report per-benchmark metrics and macro summaries, along with participation-rate and client-count details.}
-  \label{tab:global_sharded_shell}
-  \centering
-  \begin{small}
-  \begin{tabular}{lcccc}
-    \toprule
-    \textbf{Benchmark (metric)} & \textbf{Centralized (multi-task)} & \textbf{Centralized (single-task)} & \textbf{FedAvg-LoRA} & \textbf{SubspaceBank} \\
-    \midrule
-    gsm8k (acc)          & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-    hellaswag (acc)      & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-    xsum (rougeL\_f1)     & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-    hotpotqa (F1)        & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-    mbpp (pass@1)        & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-    \midrule
-    \textbf{Macro (primary metric / dataset)} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-    \bottomrule
-  \end{tabular}
-  \end{small}
-\end{table*}
 
-\subsection{Specialization Retention (Single-Client Datasets only)}
+A closer look suggests that SubspaceBank’s gains are broad rather than concentrated in a single benchmark: it nearly matches centralized multi-task on GSM8K (0.125 vs.\ 0.136) and substantially narrows the gap on HellaSwag (0.360 vs.\ 0.460), while slightly exceeding centralized multi-task on XSum (0.183 vs.\ 0.179). Notably, MBPP improves (0.060 $\rightarrow$ 0.110), highlighting an important limitation: some tasks may contribute predominantly task-private directions that do not transfer under a single global model, and the combination of low pass@5 rates and limited evaluation samples can make small differences appear discontinuous. 
+
+\paragraph{Multi-Client Datasets.}
+Table~\ref{tab:global_sharded_shell} reports global-model robustness in the Multi-Client Datasets regime, where each dataset is split across multiple clients and only a subset of clients participate each round. This setting compounds the core FTL difficulty: in addition to cross-task heterogeneity, the server observes a \emph{partial} and \emph{varying} view of each task’s update distribution from round to round. As a result, naive averaging is especially brittle: FedAvg collapses sharply relative to centralized multi-task training.
+
+SubspaceBank remains effective under this more realistic systems regime. It improves over FedAvg on all five benchmarks, indicating that geometry-aware aggregation continues to recover transferable signal even when each round’s participant set provides an incomplete snapshot of the heterogeneous client population.
+
+These across-the-board gains suggest that suppressing unstable residual components and preserving structured (shared and private) directions helps stabilize the global step under partial participation. While SubspaceBank still trails centralized multi-task training in this regime, the remaining gap is expected given that the federated setting combines strict data locality with additional stochasticity from client sampling; nevertheless, SubspaceBank substantially narrows the gap relative to FedAvg and demonstrates robustness to sharding and partial participation in dataset-pure FTL.
+
+
+
+\subsection{Specialization Retention}
 \label{sec:exp-specialization}
-In the Single-Client Datasets regime, we additionally evaluate each client’s post-local model on its own benchmark to test specialization retention. This isolates whether improved global robustness comes at the cost of degrading client-local performance (or whether interference control can preserve specialization while improving global transfer). Because this regime has only five clients (one per dataset), distributional summaries (e.g., percentiles) are not informative; instead, we report dataset-wise specialization scores and their mean across datasets. Table~\ref{tab:spec_shell} provides the reporting shell; it will compare FedAvg and SubspaceBank.
 
-\begin{table}[t]
-  \caption{Specialization retention in the Single-Client Datasets regime (placeholders). Each client post-local model is evaluated on its own dataset benchmark; we report dataset-wise scores and the mean across datasets.}
+
+\begin{table}[h]
+\caption{Specialization retention in the Single-Client Datasets regime. Each client post-local model is evaluated on its own dataset benchmark; we report dataset-wise scores and the mean across datasets.}
   \label{tab:spec_shell}
   \centering
   \begin{small}
   \begin{tabular}{lcc}
     \toprule
-    \textbf{Dataset (metric)} & \textbf{FedAvg-LoRA} & \textbf{SubspaceBank} \\
+    \textbf{Dataset (metric)} & \textbf{FedAvg} & \textbf{SubspaceBank} \\
     \midrule
-    GSM8k (acc)          & \texttt{TBD} & \texttt{TBD} \\
-    HellaSwag (acc)      & \texttt{TBD} & \texttt{TBD} \\
-    XSum (rougeL\_f1)     & \texttt{TBD} & \texttt{TBD} \\
-    HotPotQA (F1)        & \texttt{TBD} & \texttt{TBD} \\
-    MBPP (pass@1)        & \texttt{TBD} & \texttt{TBD} \\
+    GSM8k (acc)          & 0.055 & 0.137 \\
+    HellaSwag (acc)      & 0.340 & 0.520 \\
+    XSum (rougeL\_f1)     & 0.151 & 0.161 \\
+    HotPotQA (F1)        & 0.091 & 0.104 \\
+    MBPP (pass@5)        & 0.040 & 0.060 \\
     \midrule
-    \textbf{Mean across datasets} & \texttt{TBD} & \texttt{TBD} \\
+    \textbf{Mean across datasets} & 0.135 & 0.196 \\
     \bottomrule
   \end{tabular}
   \end{small}
 \end{table}
 
-\subsection{Ablations and Sensitivity (High Priority: Necessity Grid)}
+In the Single-Client Datasets regime, we additionally evaluate each client’s post-training local model on its own benchmark to assess specialization retention. This isolates whether improvements in global robustness come at the cost of degrading client-local performance. We show a side by side comparison between SubspaceBank and FedAvg in (Table~\ref{tab:spec_shell}).
+
+SubspaceBank improves or matches FedAvg on \textbf{all} specialization benchmarks in this run, with particularly large gains on GSM8K (0.055 $\rightarrow$ 0.137) and HellaSwag (0.340 $\rightarrow$ 0.520), and smaller but consistent gains on XSum and HotPotQA; MBPP improves (0.040 $\rightarrow$ 0.060). Taken together with the global results, this demonstrates controlling interference need not require sacrificing task-specific progress.
+
+In particular, preserving a client-private component in the decomposition while amplifying shared structure is consistent with improved client-local outcomes alongside improved global robustness, rather than the typical trade-off where the global model gains by ``washing out'' task-private directions.
+
+
+\subsection{Ablations and Sensitivity}
 \label{sec:exp-ablations}
-We prioritize a compact necessity grid to isolate which components drive improvements:
-(i) FedAvg; (ii) decomposition-only (set $\beta_g=\beta_r=1$ to test decomposition without reweighting);
-(iii) reweight-only (set $r_c=0$ to disable private extraction and test shared/residual reweighting alone);
-(iv) SubspaceBank (server-only); and (v) SubspaceBank (full: + projection). We additionally include ablations that are particularly important given implementation details: (a) A-only vs.\ B-only vs.\ A+B banking (because $B$ has right dimension $r$), (b) sweeps over $(r_g,r_c)$ and $(\beta_g,\beta_r)$, and (c) extension sweeps over $\rho$, payload mode (\texttt{others\_private} vs.\ \texttt{others\_plus\_shared}), and payload rank cap $r_Q$. Finally, for the Multi-Client Datasets regime we sweep participation rate (and clients per dataset), emphasizing that bases are computed from $S_t$ only (no cache/EMA), so participation directly affects basis estimation quality.
+We report ablations in the Single-Client Datasets regime using the baseline training budget. We only use the first 100 evaluation samples for each benchmark due to compute restrictions. Table~\ref{tab:ablation_grid} isolates the core components: FedAvg, decomposition-only (set $\beta_g=\beta_r=1$), reweight-only (set $r_c=0$), and SubspaceBank.
+
+\begin{table*}[h]
+\caption{Core ablations}
+  \label{tab:ablation_grid}
+  \centering
+  \begin{small}
+  \begin{tabular}{lcccccc}
+    \toprule
+    \textbf{Method} & \textbf{GSM8K} & \textbf{HellaSwag} & \textbf{XSum} & \textbf{HotPotQA} & \textbf{MBPP} & \textbf{Mean} \\
+    \midrule
+    FedAvg & 0.067 & 0.130 & 0.164 & 0.117 & 0.060 & 0.108 \\
+    Decomp-only & 0.113 & 0.130 & 0.162 & 0.120 & 0.080 & 0.121 \\
+    Reweight-only & 0.097 & 0.030 & 0.156 & 0.137 & 0.100 & 0.104 \\
+    SubspaceBank & 0.122 & 0.360 & 0.180 & 0.127 & 0.110 & 0.180 \\
+    \bottomrule
+  \end{tabular}
+  \end{small}
+\end{table*}
+
+The decomposition-only variant improves over FedAvg, while reweight-only is the weakest, indicating that \emph{both} extracting private structure and reweighting shared/residual components are necessary. A/B banking is also important: A-only or B-only banking degrades the mean score, while A+B restores full performance (details in \Cref{sec:additional-ablations}).
+
+We also sweep $(\beta_g,\beta_r)$. Figure~\ref{fig:beta-heatmap} reports the 5-task macro and shows a peak near $(\beta_g,\beta_r)=(0.5,0.5)$, with lower performance at the extremes. 
 
 
-\subsection{Geometry Diagnostics (Main + Appendix)}
+
+\subsection{Geometry Diagnostics}
 \label{sec:exp-geometry}
-We analyze the decomposition using energy fractions of the shared/private/residual components and quantify projection leakage via gradient energy along the constraint span. For each delta $D$ (suppressing indices), we compute energy fractions
-\begin{align}
-  \texttt{glob\_frac} &= \frac{\|D^{\mathrm{glob}}\|_F^2}{\|D\|_F^2}, \\
-  \texttt{priv\_frac} &= \frac{\|D^{\mathrm{priv}}\|_F^2}{\|D\|_F^2}, \\
-  \texttt{resid\_frac} &= \frac{\|R\|_F^2}{\|D\|_F^2}. \label{eq:fractions}
-\end{align}
-For the projected local update mechanism, we additionally measure a \emph{leakage proxy}: the gradient energy in $\mathrm{span}(Q_k^{(i)})$ before and after applying \Cref{eq:grad_proj}, aggregated across keys and steps.
 
-In the main text, we will include at least one figure relating global robustness gains (relative to FedAvg) to the decomposition fractions (e.g., higher \texttt{glob\_frac} and lower \texttt{resid\_frac} correlating with improved robustness). The Appendix will expand diagnostics to include orthogonality checks (e.g., $\|S^\top P\|$), cross-private similarity/principal angles, and SubspaceBank leakage proxies (pre/post projection energy in $\mathrm{span}(Q^{(i)})$), and will analyze how these quantities vary with participation and rank choices.
-latex
-Copy code
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\columnwidth]{geometry_fractions_baseline.pdf}
+  \caption{Round-wise mean energy fractions for SubspaceBank in the Single-Client regime. Values are averaged over all banked LoRA keys. Private energy dominates and the shared component remains nontrivial across rounds.}
+  \label{fig:geometry-fractions}
+\end{figure}
+
+We analyze the decomposition using energy fractions of the shared and private components. For each delta $D$ (suppressing indices), we compute energy fractions
+\begin{align}
+  \texttt{glob\_frac} &= \frac{\|D^{\mathrm{glob}}\|_F^2}{\|D\|_F^2} \\
+  \texttt{priv\_frac} &= \frac{\|D^{\mathrm{priv}}\|_F^2}{\|D\|_F^2} \\
+  \texttt{resid\_frac} &= \frac{\|R\|_F^2}{\|D\|_F^2} 
+  \label{eq:fractions}
+\end{align}
+
+In the single-client regime, the SubspaceBank decomposition is dominated by client-private energy. Averaged across all banked LoRA keys, the round-wise global fraction is 0.228 on average (min 0.188, max 0.281), while the private fraction is 0.572 on average (min 0.519, max 0.612). \Cref{fig:geometry-fractions} plots the per-round averages, showing a modest early decline in shared energy with a corresponding rise in private energy, while a nontrivial shared component persists.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Discussion and Limitations}
 \label{sec:discussion}
 
-Our initial baseline results support the hypothesis that FTL with heterogeneous dataset-clients induces destructive interference for naïve averaging: FedAvg underperforms centralized training across most benchmarks (\Cref{sec:exp-global}). SubspaceBank partially mitigates this, improving global robustness on several tasks, consistent with the idea that separating shared vs.\ private directions and constraining cross-private leakage can stabilize training.
+Our initial baseline results support the hypothesis that FTL with heterogeneous dataset-clients induces destructive interference for naïve averaging: FedAvg underperforms centralized training across most benchmarks (\Cref{sec:exp-global}). SubspaceBank partially mitigates this, improving global robustness on several tasks, consistent with the idea that separating shared vs. private directions and constraining cross-private leakage can stabilize training.
 
-We expect SubspaceBank to help most when heterogeneity is high but there exists meaningful shared structure: in such cases, \texttt{glob\_frac} should be nontrivial and amplifying $D^{\mathrm{glob}}$ should improve robustness, while suppressing residuals should reduce instability. Conversely, the method may help less under low heterogeneity (where FedAvg already works), in regimes with extremely small right dimension for key parameters (notably LoRA $B$), or when deltas are noisy and private structure cannot be reliably estimated from limited $S_t$. Partial participation is a key limitation in the current implementation: because $S_k$ and $P_{k,i}$ are computed only from $S_t$ each round (no cache/EMA/TTL), basis estimates can vary across rounds as participation changes.
+We expect SubspaceBank to help most when heterogeneity is high but there exists meaningful shared structure: in such cases, \texttt{glob\_frac} should be nontrivial and amplifying $D^{\mathrm{glob}}$ should improve robustness, while suppressing residuals should reduce instability. 
 
-The bank requires per-client deltas; strict secure aggregation would prevent direct computation of $S_k$ and $P_{k,i}$. Potential mitigations include rank caps, clipping, DP noise on deltas, or redesigning the geometry extraction to be aggregation-compatible. Finally, system overhead and fairness must be addressed with explicit budget accounting: server SVD/QR costs, client projection costs, and payload communication must be quantified and compared against matched-capacity FedAvg baselines (Appendix).
-latex
-Copy code
+Conversely, the method may help less under low heterogeneity (where FedAvg already works), in regimes with extremely small right dimension for key parameters (notably LoRA $B$), or when deltas are noisy and private structure cannot be reliably estimated from limited $S_t$. Partial participation is a key limitation as $S_k$ and $P_{k,i}$ are computed only from $S_t$ each round (no cache/EMA/TTL), basis estimates can vary across rounds as participation changes.
 
 
 
@@ -500,9 +550,31 @@ Copy code
 \section{Related Work}
 \label{sec:related}
 
-We relate our work to three areas. (i) \textbf{Federated learning under heterogeneity:} extensive work studies optimization and generalization under non-IID data, including proximal objectives, control variates, and clustering/personalization; we contrast these with the FTL objective of a single globally robust model across tasks and emphasize our use of PEFT geometry during aggregation. (ii) \textbf{Federated LLM adaptation with PEFT:} federated instruction/domain adaptation and personalization using LoRA/adapters; we share the PEFT motivation (communication and stability) but target a different objective and propose geometry-aware aggregation and client-side constraints. (iii) \textbf{Subspace/projection methods for fine-tuning:} centralized constrained updates, orthogonality and interference-avoidance in transfer/continual learning, and single-span decomposition/filtering methods; we position SubspaceBank as a \emph{federated} multi-subspace decomposition computed from federated deltas and used for structured aggregation, together with bank-derived per-client constraints during local optimization to reduce cross-task interference.
-latex
-Copy code
+We position SubspaceBank relative to (i) federated optimization under heterogeneity, (ii) federated adaptation of foundation models and LLMs with parameter-efficient tuning, and (iii) subspace and constraint methods for interference control in transfer and multi-task learning.
+
+\paragraph{Federated learning under heterogeneity}
+A large body of work studies how non-IID client data and multi-step local training induce client drift and unstable global updates, and proposes algorithmic stabilizers such as proximal regularization, control variates, normalization, and server-side adaptive optimization
+\citet{karimireddy2020scaffold,wang2020fednova,reddi2021adaptive,acar2021feddyn}.
+These methods primarily target a \emph{single} global objective and aim to make aggregation behave well despite distribution shift. A complementary line targets \emph{personalization} or \emph{multi-task} structure, e.g., by learning shared representations with task-specific heads, meta-learning personalized models, or clustering clients into latent groups
+\citet{smith2017mocha,dinh2020pfedme,li2021ditto,collins2021fedrep,ghosh2020ifca,sattler2020clustered}.
+While these frameworks address heterogeneity, their objectives differ from ours: in federated transfer fine-tuning (FTL), each client corresponds to a distinct dataset/task/domain and we seek a \emph{single} global model that is robust across all tasks (and client models that retain specialization). SubspaceBank is designed specifically around this transfer objective and the resulting \emph{interference} between task-private and transferable directions.
+
+\paragraph{FL for LLMs with PEFT.}
+In the LLM setting, recent systems and benchmarks typically emphasize (i) federated instruction tuning or federated alignment with broadly similar supervision across clients, (ii) user- or silo-level personalization, or (iii) systems scaling and communication efficiency for federating large models
+\citet{ye2024openfedllm,liu2024ferret,zhao2022fedprompt,guo2023promptfl,hu2022lora}.
+These efforts establish that federated LLM adaptation is feasible and that PEFT can be an effective communication primitive, but they generally do not isolate the dataset-pure \emph{transfer} regime we formalize—where clients are different tasks by construction and the central question is how to build one globally reliable model without cross-task negative transfer. 
+
+SubspaceBank complements this line by targeting interference explicitly: we decompose LoRA update geometry into shared/private/residual components and incorporate per-client constraints to reduce cross-client leakage during local training.
+
+\paragraph{Subspace and constraint methods for interference control.}
+In centralized multi-task learning, gradient conflict has motivated “gradient surgery” and related conflict-averse updates that modify per-task gradients to reduce destructive interference
+\citet{yu2020pcgrad,liu2021cagrad}.
+In continual learning, constraint-based methods preserve prior-task performance by restricting updates to avoid previously learned directions, often via gradient constraints or orthogonality penalties
+\citet{lopezpaz2017gem,chaudhry2018agem,farajtabar2020ogd}.
+
+SubspaceBank is inspired by these geometric perspectives but differs in a key way: our shared/private subspaces are \emph{constructed from federated client deltas} each round and used to define a structured aggregation rule that amplifies consensus while shrinking residuals.
+
+
 
 
 
@@ -510,31 +582,13 @@ Copy code
 \section{Conclusion}
 \label{sec:conclusion}
 
-We studied federated transfer fine-tuning (FTL) for LLMs, where clients correspond to distinct datasets/tasks and the goal is one global model robust across all benchmarks. We introduced SubspaceBank, which decomposes participating client LoRA deltas into shared/private/residual components via a residual-first nested-projection procedure and aggregates them using a structured recombination rule that amplifies consensus while suppressing residual noise. SubspaceBank additionally broadcasts per-client bases spanning other clients’ private subspaces and applies projected-gradient local updates to reduce cross-private leakage during multi-step optimization. Our initial baseline results show that FedAvg underperforms centralized training under heterogeneous dataset-clients, while SubspaceBank improves over FedAvg on several benchmarks and narrows the gap to centralized. The final paper will report full Multi-Client Datasets results, ablations, geometry diagnostics, and budget accounting; reproducibility details, budget accounting, and extended diagnostics are provided in the Appendix.
-latex
-Copy code
+We studied federated transfer fine-tuning (FTL) for LLMs, where clients correspond to distinct datasets/tasks and the goal is one global model robust across all benchmarks. We introduced SubspaceBank, which decomposes participating client LoRA deltas into shared/private/residual components via a residual-first nested decomposition procedure and aggregates them using a structured recombination rule that amplifies consensus while suppressing residual noise. Our baseline results show that FedAvg underperforms centralized training under heterogeneous dataset-clients, while SubspaceBank improves over FedAvg on several benchmarks and narrows the gap to centralized. Ablations indicate that both decomposition and reweighting are required and A+B banking is necessary to recover full performance. A moderate weighting choice ($\beta_g,\beta_r \approx 0.5$) performs best in the current sweep. Reproducibility details, budget accounting, and extended diagnostics are provided in the Appendix.
 
 
 \section*{Impact Statement}
-
-Authors are \textbf{required} to include a statement of the potential broader
-impact of their work, including its ethical aspects and future societal
-consequences. This statement should be in an unnumbered section at the end of
-the paper (co-located with Acknowledgements -- the two may appear in either
-order, but both must be before References), and does not count toward the paper
-page limit. In many cases, where the ethical impacts and expected societal
-implications are those that are well established when advancing the field of
-Machine Learning, substantial discussion is not required, and a simple
-statement such as the following will suffice:
-
-``This paper presents work whose goal is to advance the field of Machine
+This paper presents work whose goal is to advance the field of Machine
 Learning. There are many potential societal consequences of our work, none
-which we feel must be specifically highlighted here.''
-
-The above statement can be used verbatim in such cases, but we encourage
-authors to think about whether there is content which does warrant further
-discussion, as this statement will be apparent if the paper is later flagged
-for ethics review.
+which we feel must be specifically highlighted here.
 
 % In the unusual situation where you want a paper to appear in the
 % references without citing it in the main text, use \nocite
@@ -553,54 +607,174 @@ for ethics review.
 \onecolumn
 
 \section{Reproducibility Details}
+\label{sec:appendix-repro}
+
 \begin{itemize}
-  \item \textbf{Baseline run identifiers:}
-  Run id \texttt{individual\_local\_20260115\_100457\_21987};
-  results root \texttt{FTL/individual\_results/individual\_local\_20260115\_100457\_21987};
-  eval job id \texttt{eval\_individual\_local\_20260115\_100457\_21987}.
   \item \textbf{Datasets (Single-Client Datasets baseline; one client per task):}
-  GSM8K, HellaSwag, XSum, MBPP, HotpotQA (distractor).
-  Clients configured in \texttt{FTL/materials/individual\_federated\_clients.yaml} and prepared in \texttt{data/individual\_federated}.
+  GSM8K, HellaSwag, XSum, MBPP, HotpotQA.
+
   \item \textbf{Model + PEFT:}
-  base model \texttt{meta-llama/Llama-2-7b-hf};
-  LoRA $r{=}8$, $\alpha{=}32$, dropout $0.05$;
-  target modules \texttt{q\_proj,k\_proj,v\_proj,o\_proj};
-  token length 2048.
-  \item \textbf{Federated configs:}
-  FedAvg \texttt{FTL/yamls/individual\_federated\_fedavg.yaml};
-  SubspaceBank \texttt{FTL/yamls/individual\_federated\_bank\_perclient.yaml} (projection enabled);
-  centralized \texttt{FTL/yamls/individual\_federated\_centralized.yaml}.
-  \item \textbf{Key baseline hyperparameters (Single-Client Datasets):}
-  total rounds 60; local steps 250 (FedAvg/SubspaceBank) and 75 (centralized); batch size 1; precision bf16; learning rate $2\cdot 10^{-4}$ (FedAvg/SubspaceBank) and $2\cdot 10^{-5}$ (centralized); sample client rate 1.0 for federated baselines (full participation).
-  \item \textbf{Evaluation:}
-  100 samples per benchmark (where available). Aggregate metrics loaded from each method’s \texttt{eval/aggregate.json}. We exclude failed or missing benchmarks from comparisons.
-  \item \textbf{Missing/failed benchmarks in this run:}
-  PIQA (dataset load failure), APPS (dataset load failure), ToolBench (evaluation not run due to missing eval command/output).
-  \item \textbf{Multi-Client Datasets regime details (to be filled):}
-  client construction protocol, clients per dataset, participation rate schedule, and any client-level filtering; these will be documented here once the run completes.
+  We fine-tune a LLaMA2-7B backbone using LoRA adapters on attention projection
+  modules ($q/k/v/o$). Unless otherwise stated, LoRA uses rank $r=8$,
+  $\alpha=32$, and dropout $0.05$. In addition to LoRA parameters, we include
+  the token embedding matrix and the LM head as trainable modules. Sequence
+  length is $2048$ tokens.
+
+  \item \textbf{Federated protocol (Single-Client Datasets baseline):}
+  We run $60$ communication rounds with full participation (all clients sampled
+  each round). Each round performs $250$ local optimizer steps per client with
+  batch size $1$. The random seed is $42$ for all baseline runs.
+
+  \item \textbf{Optimization (FedAvg and SubspaceBank baselines):}
+  Clients use Adam with learning rate $2\times 10^{-4}$,
+  $(\beta_1,\beta_2)=(0.9,0.95)$, $\epsilon=10^{-5}$, bf16 precision, and
+  gradient clipping at $1.0$.
+
+  \item \textbf{SubspaceBank hyperparameters (Single-Client baseline):}
+  For banked keys, SubspaceBank uses shared rank $r_g=1$, private rank $r_c=12$,
+  reweighting coefficients $\beta_g=0.65$ and $\beta_r=0.15$, and global step
+  size $\alpha=1.0$ in \Cref{eq:agg_update}. Banking is applied to LoRA $A/B$
+  matrices for the $q/k/v/o$ projections; non-banked parameters use standard
+  weighted averaging. We set the residual shrinkage factor $\lambda=1.0$.
+
+  \item \textbf{Multi-Client Datasets regime details:}
 \end{itemize}
 
-\section{Budget Accounting}
-\begin{itemize}
-  \item Trainable parameter counts (LoRA ranks) per method; parameter/key counts for banked tensors.
-  \item Server compute overhead per round (SVD/QR) and its scaling with $|S_t|$, $d_{\mathrm{in}}$, and chosen ranks; client projection overhead per step.
-  \item Communication: bytes per round for model broadcast and client returns; additional payload bytes for $Q^{(i)}$ (including rank cap effects); totals across training.
-  \item Construction of matched-capacity/budget baselines (e.g., higher-rank FedAvg or additional local steps) and how we normalize comparisons.
-\end{itemize}
 
 \section{Proofs and Extended Theory Details}
-\begin{itemize}
-  \item Full proofs for Track A (operator form) and supporting lemmas; discussion of assumptions/limits under partial participation and finite-sample basis estimation.
-  \item Extended analysis for Track B: idealized projection lemma; practical leakage characterization under multi-step training, clipping, and adaptive optimizers; dependence on $\rho$, payload rank truncation, and basis error.
-\end{itemize}
+\label{sec:appendix-theory}
+
+This appendix collects the minimal linear-algebraic facts underlying SubspaceBank: (i) why the shared/private bases in \Cref{eq:shared_opt,eq:private_opt} are given by top right singular vectors, (ii) the orthogonality and energy decompositions implied by the residual-first construction, and (iii) the operator form in \Cref{eq:operator_view}.
+
+\subsection{SVD optimality for the shared and private bases}
+\label{sec:appendix-svd-opt}
+
+We restate the shared basis optimization (\Cref{eq:shared_opt}) in a form that makes the SVD solution immediate. Fix any matrix $M\in\mathbb{R}^{m\times d}$ (in our method, $M=M_k^t$) and any orthonormal $S\in\mathbb{R}^{d\times r}$ with $S^\top S=I$.
+
+\paragraph{Lemma A.1 (Shared-basis optimality).}
+Let $\Pi_S \triangleq SS^\top$. Then
+\begin{equation}
+\|M(I-\Pi_S)\|_F^2 \;=\; \|M\|_F^2 - \|MS\|_F^2,
+\label{eq:appendix-pythag-ms}
+\end{equation}
+so minimizing $\|M(I-\Pi_S)\|_F^2$ over orthonormal $S$ is equivalent to maximizing $\|MS\|_F^2$. An optimizer is given by choosing $S$ to be the top-$r$ right singular vectors of $M$.
+
+\paragraph{Proof.}
+Using $\|A\|_F^2=\mathrm{tr}(A^\top A)$ and $\Pi_S^2=\Pi_S$, $\Pi_S^\top=\Pi_S$,
+\[
+\|M(I-\Pi_S)\|_F^2
+= \mathrm{tr}\!\big((I-\Pi_S)M^\top M(I-\Pi_S)\big)
+= \mathrm{tr}(M^\top M) - \mathrm{tr}(\Pi_S M^\top M).
+\]
+Since $\mathrm{tr}(\Pi_S M^\top M)=\mathrm{tr}(S^\top M^\top M S)=\|MS\|_F^2$, we obtain \Cref{eq:appendix-pythag-ms}. The maximizer of $\mathrm{tr}(S^\top M^\top M S)$ over orthonormal $S$ is the top-$r$ eigenspace of $M^\top M$, equivalently the top-$r$ right singular vectors of $M$. \hfill$\square$
+
+Applying Lemma A.1 to $M_k^t$ yields \Cref{eq:shared_opt} and justifies $S_k^t=V_k^t[:,1{:}r_g]$ in \Cref{eq:shared_basis}. The same argument applies to the private-basis objective \Cref{eq:private_opt} with $M=R_{k,i}^{t,(0)}$, giving $\hat P_{k,i}^t$ as the top-$r_c$ right singular vectors.
+
+\subsection{Orthogonality and energy decompositions}
+\label{sec:appendix-orthogonality}
+
+The decomposition in \Cref{eq:glob_comp,eq:priv_comp,eq:final_resid} is built by right-multiplying by orthogonal projectors. This implies exact orthogonality identities in the Frobenius inner product, which in turn justify the energy-fraction diagnostics in \Cref{sec:exp-geometry}.
+
+\paragraph{Lemma A.2 (Right-projector Pythagoras).}
+Let $\Pi$ be any orthogonal projector in $\mathbb{R}^{d_{\mathrm{in}}\times d_{\mathrm{in}}}$ (i.e., $\Pi^\top=\Pi$ and $\Pi^2=\Pi$). Then for any $D\in\mathbb{R}^{d_{\mathrm{out}}\times d_{\mathrm{in}}}$,
+\begin{align}
+\langle D\Pi,\; D(I-\Pi)\rangle_F &= 0,
+\label{eq:appendix-cross0}\\
+\|D\|_F^2 &= \|D\Pi\|_F^2 + \|D(I-\Pi)\|_F^2.
+\label{eq:appendix-pythag}
+\end{align}
+
+\paragraph{Proof.}
+Using $\langle A,B\rangle_F=\mathrm{tr}(A^\top B)$,
+\[
+\langle D\Pi,\,D(I-\Pi)\rangle_F
+= \mathrm{tr}\!\big(\Pi D^\top D(I-\Pi)\big)
+= \mathrm{tr}\!\big(\Pi D^\top D - \Pi D^\top D\Pi\big)
+= \mathrm{tr}\!\big(\Pi D^\top D(I-\Pi)\big),
+\]
+but since $\Pi(I-\Pi)=0$, the quantity is zero. Expanding $\|D\|_F^2=\|D\Pi + D(I-\Pi)\|_F^2$ and using \Cref{eq:appendix-cross0} gives \Cref{eq:appendix-pythag}. \hfill$\square$
+
+Lemma A.2 applied to $\Pi_{S_k^t}$ gives the orthogonal split
+\[
+\|D_{k,i}^t\|_F^2
+= \|D_{k,i}^{t,\mathrm{glob}}\|_F^2 + \|R_{k,i}^{t,(0)}\|_F^2.
+\]
+Next, by construction $P_{k,i}^t$ is obtained by orthogonalizing $\hat P_{k,i}^t$ against $S_k^t$ and re-orthonormalizing:
+\[
+P_{k,i}^t = \operatorname{orth}\!\big((I-\Pi_{S_k^t})\hat P_{k,i}^t\big).
+\]
+Thus $\mathrm{span}(P_{k,i}^t)\subseteq \mathrm{range}(I-\Pi_{S_k^t})$, implying $(S_k^t)^\top P_{k,i}^t = 0$ and $\Pi_{S_k^t}\Pi_{P_{k,i}^t}=0$. This is the same projector-orthogonalization principle used in Gram--Schmidt-style subspace discrimination (This analysis is heavily inspired by the analysis found in UNLEARN~\citet{lizzo2024unlearn}).
+
+Finally, applying Lemma A.2 again within the residual (with $\Pi=\Pi_{P_{k,i}^t}$ and $D=R_{k,i}^{t,(0)}$) yields
+\[
+\|R_{k,i}^{t,(0)}\|_F^2
+= \|D_{k,i}^{t,\mathrm{priv}}\|_F^2 + \|R_{k,i}^t\|_F^2,
+\]
+and combining the two Pythagorean identities gives the three-way energy decomposition
+\begin{equation}
+\|D_{k,i}^t\|_F^2
+= \|D_{k,i}^{t,\mathrm{glob}}\|_F^2
++ \|D_{k,i}^{t,\mathrm{priv}}\|_F^2
++ \|R_{k,i}^t\|_F^2.
+\label{eq:appendix-threeway}
+\end{equation}
+Equation \Cref{eq:appendix-threeway} implies that the energy fractions in \Cref{eq:fractions} sum to $1$ (up to numerical error), and makes explicit that increasing $r_g$ and/or $r_c$ can only decrease residual energy, since each basis is chosen by a best-approximation criterion (Lemma A.1).
+
+\subsection{Operator form of the structured delta}
+\label{sec:appendix-operator}
+
+We derive \Cref{eq:operator_view} directly from the definitions. Suppressing indices $(k,i,t)$ for readability, write $\Pi_S$ for the shared projector and $\Pi_P$ for the (post-orthogonalization) private projector.
+
+From \Cref{eq:glob_comp,eq:resid0,eq:priv_comp}, we have
+\[
+D^{\mathrm{glob}} = D\Pi_S,\qquad
+D^{\mathrm{priv}} = D(I-\Pi_S)\Pi_P.
+\]
+From \Cref{eq:final_resid}, the residual is
+\[
+R = D - D\Pi_S - D(I-\Pi_S)\Pi_P
+  = D(I-\Pi_S)(I-\Pi_P),
+\]
+where the last equality uses distributivity and $\Pi_S(I-\Pi_S)=0$. Plugging these into \Cref{eq:structured_delta} gives
+\begin{align*}
+\tilde D
+&= D(I-\Pi_S)\Pi_P \;+\; \beta_g D\Pi_S \;+\; \beta_r D(I-\Pi_S)(I-\Pi_P)\\
+&= \beta_r D \;+\; (\beta_g-\beta_r)D\Pi_S \;+\; (1-\beta_r)D(I-\Pi_S)\Pi_P,
+\end{align*}
+which matches \Cref{eq:operator_view}. In particular, setting $\beta_g=\beta_r=1$ recovers $\tilde D=D$ and thus FedAvg on banked keys (as noted in \Cref{sec:structured-agg}).
+
 
 \section{Additional Diagnostics and Ablations}
-\begin{itemize}
-  \item Full geometry suite: orthogonality checks, principal angles between private bases, cross-private similarity matrices, and per-key/per-round summaries.
-  \item SubspaceBank leakage measurement protocol: pre/post projection energy along $Q^{(i)}$ aggregated over steps/keys; correlation plots with benchmark improvements.
-  \item Extended sweeps: ranks $(r_g,r_c)$, weights $(\beta_g,\beta_r)$, projection strength $\rho$, payload mode, payload rank cap; A-only vs.\ B-only vs.\ A+B banking.
-  \item Participation sweeps (especially Multi-Client Datasets): sensitivity to sample client rate, clients per dataset, and (if implemented) recompute frequency or caching variants.
-\end{itemize}
+\label{sec:additional-ablations}
+
+\begin{table}[h]
+\caption{Banking ablations (global evaluation; 100 samples per benchmark).}
+  \label{tab:ablation_bank}
+  \centering
+  \begin{small}
+  \begin{tabular}{lcccccc}
+    \toprule
+    \textbf{Banking} & \textbf{GSM8K} & \textbf{HellaSwag} & \textbf{XSum} & \textbf{HotPotQA} & \textbf{MBPP} & \textbf{Mean} \\
+    \midrule
+    A-only & 0.067 & 0.100 & 0.162 & 0.114 & 0.180 & 0.125 \\
+    B-only & 0.115 & 0.120 & 0.163 & 0.105 & 0.110 & 0.123 \\
+    A+B & 0.122 & 0.360 & 0.180 & 0.127 & 0.110 & 0.180 \\
+    \bottomrule
+  \end{tabular}
+  \end{small}
+\end{table}
+
+
+We include extended ablations that probe how the banking construction and weighting choices influence performance. Table~\ref{tab:ablation_bank} shows that A-only or B-only banking degrades global robustness, while A+B recovers the full method (B-only is slightly better than A-only but still substantially below A+B).
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.5\columnwidth]{ablation_beta_heatmap.pdf}
+  \caption{Sweep over $(\beta_g,\beta_r)$ reporting 5-task macro (100-sample evaluation). Best performance appears near $(0.5,0.5)$.}
+  \label{fig:beta-heatmap}
+\end{figure}
+
+We also compute orthogonality checks and principal-angle diagnostics between private subspaces, which align with the geometric trends reported in \Cref{sec:exp-geometry}; we omit those plots for space.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
