@@ -2,6 +2,7 @@ import json
 import math
 import multiprocessing as mp
 import os
+import re
 import textwrap
 
 import transformers
@@ -13,7 +14,6 @@ from federatedscope.core.cmd_args import parse_args, parse_client_cfg
 from federatedscope.core.auxiliaries.utils import setup_seed
 from federatedscope.core.auxiliaries.logging import update_logger
 from federatedscope.llm.misc.fschat import FSChatBot
-
 transformers.logging.set_verbosity(40)
 
 
@@ -22,6 +22,10 @@ def _clean_code(text: str) -> str:
         parts = text.split("```")
         if len(parts) >= 2:
             text = parts[1]
+            lines = text.splitlines()
+            if lines and re.match(r"^\s*python\s*$", lines[0], re.IGNORECASE):
+                lines = lines[1:]
+            text = "\n".join(lines)
     return textwrap.dedent(text).strip()
 
 
@@ -81,6 +85,98 @@ def _get_timeout(cfg):
     return 3.0
 
 
+def _get_eval_opt(cfg, name, default):
+    if hasattr(cfg, "eval") and hasattr(cfg.eval, name):
+        return getattr(cfg.eval, name)
+    return default
+
+
+def _extract_signature(code: str, tests) -> tuple:
+    if code:
+        match = re.search(r"^\s*def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*:",
+                          code,
+                          re.MULTILINE)
+        if match:
+            name = match.group(1)
+            args = match.group(2).strip()
+            signature = f"def {name}({args}):"
+            return signature, name
+    text = ""
+    if isinstance(tests, (list, tuple)):
+        text = "\n".join(tests)
+    elif isinstance(tests, str):
+        text = tests
+    match = re.search(r"assert\s+([A-Za-z_]\w*)\s*\(",
+                      text,
+                      re.MULTILINE)
+    if match:
+        return None, match.group(1)
+    return None, None
+
+
+def _build_user_prompt(text: str,
+                       signature: str,
+                       func_name: str,
+                       include_instructions: bool = True) -> str:
+    parts = []
+    if include_instructions:
+        parts.append("Write a Python function that solves the following problem.")
+        parts.append("Do not use input() or print(). Return the result.")
+    if text:
+        parts.append(text.strip())
+    if signature:
+        parts.append(f"Function signature:\n{signature}")
+    elif func_name:
+        parts.append(f"Function name: {func_name}")
+    parts.append("Provide only the Python code.")
+    return "\n\n".join(parts)
+
+
+def _load_prompt_examples(cfg, data_root):
+    num_shots = int(_get_eval_opt(cfg, "mbpp_num_shots", 0))
+    if num_shots <= 0:
+        return []
+    split = "prompt"
+    config_name = _get_eval_opt(cfg, "mbpp_config", None)
+    dataset = load_dataset("mbpp",
+                           config_name,
+                           split=split,
+                           cache_dir=data_root)
+    examples = []
+    for sample in dataset:
+        text = sample.get("text")
+        code = sample.get("code")
+        tests = sample.get("test_list") or sample.get("tests")
+        if not text or not code:
+            continue
+        signature, func_name = _extract_signature(code, tests)
+        user_prompt = _build_user_prompt(text, signature, func_name, True)
+        examples.append((user_prompt, str(code).rstrip()))
+        if len(examples) >= num_shots:
+            break
+    return examples
+
+
+def _build_prompt(sample, cfg, prompt_examples):
+    text = sample.get("text")
+    code = sample.get("code")
+    tests = sample.get("test_list") or sample.get("tests")
+    signature, func_name = _extract_signature(str(code) if code else "", tests)
+    user_prompt = _build_user_prompt(text, signature, func_name, True)
+    use_chat = bool(_get_eval_opt(cfg, "mbpp_use_chat_prompt", True))
+    if use_chat:
+        parts = []
+        for shot_prompt, shot_code in prompt_examples:
+            parts.append(f"User: {shot_prompt}\n\nAssistant: {shot_code}")
+        parts.append(f"User: {user_prompt}\n\nAssistant:")
+        return "\n\n".join(parts)
+    parts = []
+    for shot_prompt, shot_code in prompt_examples:
+        parts.append("### Problem\n" + shot_prompt + "\n### Solution\n" + shot_code)
+    parts.append("### Problem\n" + user_prompt + "\n### Solution\n")
+    return "\n\n".join(parts)
+
+
 def main():
     init_cfg = global_cfg.clone()
     args = parse_args()
@@ -123,7 +219,12 @@ def main():
         elif isinstance(split_val, (list, tuple)) and split_val:
             split = split_val[0]
 
-    dataset = load_dataset("mbpp", split=split, cache_dir=data_root)
+    config_name = _get_eval_opt(init_cfg, "mbpp_config", None)
+    dataset = load_dataset("mbpp",
+                           config_name,
+                           split=split,
+                           cache_dir=data_root)
+    prompt_examples = _load_prompt_examples(init_cfg, data_root)
 
     pass_at_1 = []
     pass_at_5 = []
@@ -133,7 +234,7 @@ def main():
     for sample in tqdm(dataset, desc="mbpp"):
         if max_samples is not None and total >= max_samples:
             break
-        prompt = sample.get("text")
+        prompt = _build_prompt(sample, init_cfg, prompt_examples)
         tests = sample.get("test_list") or sample.get("tests")
         if not prompt or not tests:
             continue

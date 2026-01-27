@@ -25,8 +25,12 @@ def _normalize(text: str) -> str:
 
 
 def _f1_score(pred: str, truth: str) -> float:
-    pred_tokens = _normalize(pred).split()
-    truth_tokens = _normalize(truth).split()
+    pred_norm = _normalize(pred)
+    truth_norm = _normalize(truth)
+    if truth_norm in {"yes", "no", "noanswer"}:
+        return float(pred_norm == truth_norm)
+    pred_tokens = pred_norm.split()
+    truth_tokens = truth_norm.split()
     if not pred_tokens and not truth_tokens:
         return 1.0
     if not pred_tokens or not truth_tokens:
@@ -110,7 +114,25 @@ def main():
         answer = sample.get("answer")
         if not question or answer is None:
             continue
-        prompt = f"{question}\nAnswer:"
+        context = sample.get("context") or {}
+        titles = context.get("title") or []
+        sentences = context.get("sentences") or []
+        parts = []
+        for title, sents in zip(titles, sentences):
+            if not sents:
+                continue
+            text = " ".join([str(s).strip() for s in sents if s])
+            if not text:
+                continue
+            if title:
+                parts.append(f"[{str(title).strip()}] {text}")
+            else:
+                parts.append(text)
+        context_block = "\n".join(parts).strip()
+        if context_block:
+            prompt = f"Context:\n{context_block}\n\nQuestion: {question}\nAnswer:"
+        else:
+            prompt = f"{question}\nAnswer:"
         pred = bot.generate(prompt, generate_kwargs)
         pred_text = pred or ""
         if _exact_match(pred_text, answer):

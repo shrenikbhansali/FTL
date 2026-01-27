@@ -1,5 +1,6 @@
 import torch
 import logging
+import math
 try:
     import deepspeed
     from deepspeed import DeepSpeedEngine
@@ -39,6 +40,7 @@ class LLMTrainer(GeneralTorchTrainer):
         self._proj_strength = 1.0
         self._unlearn_proj_dtype = 'float32'
         self._leakage_stats = None
+        self._proj_log_round = None
 
     def _hook_on_fit_start_numerical_precision(self, ctx):
         precision = getattr(self.cfg.train, 'precision', None)
@@ -88,8 +90,13 @@ class LLMTrainer(GeneralTorchTrainer):
         ctx.ys_prob = CtxVar([], LIFECYCLE.ROUTINE)
         ctx.nan_batch_count = CtxVar(0, LIFECYCLE.ROUTINE)
         ctx.skipped_batch_count = CtxVar(0, LIFECYCLE.ROUTINE)
+        log_leakage = getattr(self.cfg.train.unlearn, 'log_leakage', False)
+        log_projection = getattr(self.cfg.train.unlearn, 'log_projection',
+                                 False)
+        log_projection = getattr(self.cfg.train.unlearn, 'log_projection',
+                                 False)
         if ctx.cur_mode in [MODE.TRAIN, MODE.FINETUNE] and \
-                getattr(self.cfg.train.unlearn, 'log_leakage', False):
+                (log_leakage or log_projection):
             self._leakage_stats = {
                 'pre': 0.0,
                 'post': 0.0,
@@ -322,6 +329,27 @@ class LLMTrainer(GeneralTorchTrainer):
                 self._unlearn_round = 0
         self._proj_strength = self._compute_proj_strength(self._unlearn_round)
 
+        if getattr(self.cfg.train.unlearn, 'log_projection', False):
+            if not processed:
+                logger.info(
+                    '[UNLEARN][proj][bases] round=%s kind=%s keys=0',
+                    self._unlearn_round, self._unlearn_kind)
+            else:
+                ranks = [tensor.shape[1] for tensor in processed.values()]
+                num_keys = len(ranks)
+                total_rank = sum(ranks)
+                avg_rank = total_rank / max(num_keys, 1)
+                max_rank = max(ranks)
+                sample_items = list(processed.items())[:3]
+                sample_desc = ",".join(
+                    f"{name}:{tensor.shape[1]}" for name, tensor in sample_items
+                )
+                logger.info(
+                    '[UNLEARN][proj][bases] round=%s kind=%s keys=%d '
+                    'total_rank=%d avg_rank=%.2f max_rank=%d sample=%s',
+                    self._unlearn_round, self._unlearn_kind, num_keys,
+                    total_rank, avg_rank, max_rank, sample_desc)
+
     def _project_gradients(self, ctx):
         if not self.cfg.train.unlearn.project_grads:
             return
@@ -358,7 +386,8 @@ class LLMTrainer(GeneralTorchTrainer):
                 proj_coeff = grad_fp @ Q
                 projection = proj_coeff @ Q.transpose(0, 1)
                 adjusted = grad_fp - strength * projection
-                if log_leakage and self._leakage_stats is not None:
+                if (log_leakage or log_projection) and \
+                        self._leakage_stats is not None:
                     self._update_leakage_stats(grad_fp, proj_coeff, Q,
                                                adjusted)
                 param.grad.data = adjusted.to(dtype=param.grad.dtype)
@@ -430,7 +459,10 @@ class LLMTrainer(GeneralTorchTrainer):
             stats['failed'] = True
 
     def _log_leakage_stats(self, ctx):
-        if not getattr(self.cfg.train.unlearn, 'log_leakage', False):
+        log_leakage = getattr(self.cfg.train.unlearn, 'log_leakage', False)
+        log_projection = getattr(self.cfg.train.unlearn, 'log_projection',
+                                 False)
+        if not (log_leakage or log_projection):
             return
         if ctx.cur_mode not in [MODE.TRAIN, MODE.FINETUNE]:
             return
@@ -450,7 +482,8 @@ class LLMTrainer(GeneralTorchTrainer):
             else:
                 leakage_ratio = leakage_post / leakage_pre
 
-        if getattr(self.cfg, 'wandb', None) and self.cfg.wandb.use:
+        if log_leakage and getattr(self.cfg, 'wandb', None) and \
+                self.cfg.wandb.use:
             try:
                 import wandb
                 payload = {
@@ -468,9 +501,26 @@ class LLMTrainer(GeneralTorchTrainer):
                 logger.warning("Failed to log leakage stats to wandb: %s",
                                exc)
 
-        logger.info(
-            '[UNLEARN][bank][leakage] pre=%.6f post=%.6f ratio=%.6f failed=%s',
-            leakage_pre, leakage_post, leakage_ratio, failed)
+        if log_leakage:
+            logger.info(
+                '[UNLEARN][bank][leakage] pre=%.6f post=%.6f ratio=%.6f '
+                'failed=%s', leakage_pre, leakage_post, leakage_ratio, failed)
+
+        if log_projection:
+            if self._proj_log_round != self._unlearn_round:
+                grad_norm = math.sqrt(max(denom, 0.0))
+                proj_norm = math.sqrt(max(stats.get('pre', 0.0), 0.0))
+                rho = getattr(self.cfg.train.unlearn, 'proj_rho', 1.0)
+                try:
+                    rho_val = float(rho)
+                except (TypeError, ValueError):
+                    rho_val = 1.0
+                logger.info(
+                    '[UNLEARN][proj][norm] round=%s grad_norm=%.6f '
+                    'proj_norm=%.6f proj_frac=%.6f strength=%.3f',
+                    self._unlearn_round, grad_norm, proj_norm, leakage_pre,
+                    self._proj_strength * rho_val)
+                self._proj_log_round = self._unlearn_round
         self._leakage_stats = None
 
 

@@ -22,6 +22,10 @@ def extend_evaluation_cfg(cfg):
     # Monitoring, e.g., 'dissim' for B-local dissimilarity
     cfg.eval.monitoring = []
     cfg.eval.count_flops = True
+    # MBPP eval options (used by eval_for_mbpp)
+    cfg.eval.mbpp_num_shots = 0
+    cfg.eval.mbpp_config = ""
+    cfg.eval.mbpp_use_chat_prompt = True
 
     # ---------------------------------------------------------------------- #
     # wandb related options

@@ -1,4 +1,7 @@
+import json
 import logging
+import time
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import torch
@@ -27,6 +30,11 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
         self._last_bases: Dict[str, torch.Tensor] = {}
         self._last_bases_per_client: Dict[int, Dict[str, torch.Tensor]] = {}
         self._ema_cache: Dict[int, Dict[str, torch.Tensor]] = {}
+        self._client_group_map: Optional[Dict[int, str]] = None
+        self._server_flops_total = 0.0
+        outdir = getattr(self.cfg, 'outdir', None)
+        self._server_flops_log_path = Path(outdir) / 'server_flops.log' \
+            if outdir else None
 
     @property
     def latest_bases(self) -> Dict[str, torch.Tensor]:
@@ -89,6 +97,12 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             client_ids = list(range(len(client_states)))
 
         updated_tensors: Dict[str, torch.Tensor] = {}
+        flop_counter = {
+            'total': 0.0,
+            'svd': 0.0,
+            'qr': 0.0,
+            'mm': 0.0,
+        }
 
         if not bank_enabled:
             chunk_rows = self.cfg.aggregator.unlearn.chunk_rows
@@ -235,6 +249,17 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             bank_proj_mode = str(
                 getattr(bank_cfg, 'bank_proj_mode', 'others_private'))
             include_shared = bank_proj_mode.lower() == 'others_plus_shared'
+            bank_proj_exclude_same_group = bool(
+                getattr(bank_cfg, 'bank_proj_exclude_same_group', False))
+            bank_proj_group_by = str(
+                getattr(bank_cfg, 'bank_proj_group_by', 'group_values'))
+            bank_shared_balance = bool(
+                getattr(bank_cfg, 'bank_shared_balance', False))
+            bank_shared_balance_mode = str(
+                getattr(bank_cfg, 'bank_shared_balance_mode', 'mean'))
+            bank_shared_balance_group_by = str(
+                getattr(bank_cfg, 'bank_shared_balance_group_by',
+                        bank_proj_group_by))
             bank_proj_rank_max = int(
                 getattr(bank_cfg, 'bank_proj_rank_max', 0))
             work_dtype = self._resolve_proj_dtype(proj_dtype)
@@ -255,9 +280,17 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                         delta.to(device=self._device, dtype=work_dtype)
                         for delta in deltas_for_key
                     ]
-                    stacked = torch.cat(deltas_fp, dim=0)
+                    if bank_shared_balance:
+                        group_map = self._get_client_group_map(
+                            bank_shared_balance_group_by)
+                        stacked = self._build_task_balanced_stack(
+                            deltas_fp, client_ids, group_map,
+                            bank_shared_balance_mode)
+                    else:
+                        stacked = torch.cat(deltas_fp, dim=0)
                     S_k = self._build_global_basis_for_bank(
-                        stacked, r_global_cfg, energy_target, key)
+                        stacked, r_global_cfg, energy_target, key,
+                        flop_counter)
                     if S_k is not None:
                         shared_bases[key] = S_k.detach()
 
@@ -271,7 +304,8 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                                                dtype=work_dtype)
                         d_glob, d_priv, d_res, priv_basis = \
                             self._decompose_with_bank(delta_fp, S_k,
-                                                      r_client_cfg, key)
+                                                      r_client_cfg, key,
+                                                      flop_counter)
                         tilde = d_priv + beta_global * d_glob + \
                             beta_resid * d_res
                         weight = weights[idx] if idx < len(weights) else 0.0
@@ -329,7 +363,8 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
             if send_flag and bank_send_per_client and private_bases:
                 per_client_payload = self._build_bank_per_client_payload(
                     private_bases, shared_bases, client_ids, proj_dtype,
-                    bank_proj_rank_max, include_shared, round_idx)
+                    bank_proj_rank_max, include_shared, round_idx,
+                    bank_proj_exclude_same_group, bank_proj_group_by)
             else:
                 per_client_payload = {}
             self._last_bases_per_client = per_client_payload
@@ -467,10 +502,57 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                             'cross_mean=%.4f',
                             weighted_orth, weighted_cross)
 
+        self._log_server_flops(round_idx, flop_counter)
         maybe_clear_cuda(self._device)
 
         base_result.update(updated_tensors)
         return base_result
+
+    def _log_server_flops(self, round_idx: int,
+                          flop_counter: Dict[str, float]) -> None:
+        if flop_counter['total'] <= 0:
+            return
+        self._server_flops_total += flop_counter['total']
+        if self._server_flops_log_path is None:
+            return
+        record = {
+            'round': int(round_idx),
+            'server_flops_total': flop_counter['total'],
+            'server_flops_svd': flop_counter['svd'],
+            'server_flops_qr': flop_counter['qr'],
+            'server_flops_mm': flop_counter['mm'],
+            'server_flops_cumulative': self._server_flops_total,
+            'timestamp': time.time(),
+        }
+        try:
+            self._server_flops_log_path.parent.mkdir(parents=True,
+                                                     exist_ok=True)
+            with self._server_flops_log_path.open('a') as f:
+                f.write(json.dumps(record) + "\n")
+        except Exception as exc:
+            logger.warning("Failed to log server flops: %s", exc)
+
+    @staticmethod
+    def _svd_flops(m: int, n: int) -> float:
+        if m <= 0 or n <= 0:
+            return 0.0
+        if m < n:
+            m, n = n, m
+        return 4.0 * m * n * n + (8.0 / 3.0) * n * n * n
+
+    @staticmethod
+    def _qr_flops(m: int, n: int) -> float:
+        if m <= 0 or n <= 0:
+            return 0.0
+        if m < n:
+            m, n = n, m
+        return 2.0 * m * n * n - (2.0 / 3.0) * n * n * n
+
+    @staticmethod
+    def _mm_flops(a: int, b: int, c: int) -> float:
+        if a <= 0 or b <= 0 or c <= 0:
+            return 0.0
+        return 2.0 * a * b * c
 
     def _normalize_client_states(
         self, models: List[Tuple[int, Dict]]
@@ -769,10 +851,15 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
         rank_max: int,
         include_shared: bool,
         round_idx: int,
+        exclude_same_group: bool,
+        group_by: str,
     ) -> Dict[int, Dict[str, object]]:
         if not private_bases:
             return {}
         dtype = self._resolve_proj_dtype(proj_dtype)
+        group_map: Dict[int, str] = {}
+        if exclude_same_group:
+            group_map = self._get_client_group_map(group_by)
         unique_clients = list(dict.fromkeys(client_ids)) if client_ids else \
             sorted({
             cid
@@ -781,11 +868,17 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
         payload: Dict[int, Dict[str, object]] = {}
         for client_id in unique_clients:
             q_dict: Dict[str, torch.Tensor] = {}
+            client_group = self._lookup_group(group_map, client_id) \
+                if exclude_same_group else None
             for key, basis_map in private_bases.items():
                 others = []
                 for other_id, basis in basis_map.items():
                     if other_id == client_id:
                         continue
+                    if exclude_same_group and client_group is not None:
+                        other_group = self._lookup_group(group_map, other_id)
+                        if other_group == client_group:
+                            continue
                     others.append(basis.to(device=self._device,
                                            dtype=dtype))
                 if include_shared:
@@ -809,6 +902,156 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                 }
         return payload
 
+    def _build_task_balanced_stack(
+        self,
+        deltas: List[torch.Tensor],
+        client_ids: List[int],
+        group_map: Dict[int, str],
+        mode: str,
+    ) -> torch.Tensor:
+        if not deltas:
+            return torch.empty(0, device=self._device)
+        groups: Dict[str, List[torch.Tensor]] = {}
+        for idx, delta in enumerate(deltas):
+            client_id = client_ids[idx] if idx < len(client_ids) else idx
+            group = self._lookup_group(group_map, client_id)
+            if group is None:
+                group = f'client_{client_id}'
+            groups.setdefault(group, []).append(delta)
+        if not groups:
+            return torch.cat(deltas, dim=0)
+        mode = (mode or 'mean').lower()
+        if mode == 'weighted':
+            weighted = []
+            for group_deltas in groups.values():
+                weight = float(len(group_deltas))
+                for delta in group_deltas:
+                    weighted.append(delta / max(weight, 1.0))
+            return torch.cat(weighted, dim=0)
+        means = []
+        for group_deltas in groups.values():
+            stacked = torch.stack(group_deltas, dim=0)
+            means.append(torch.mean(stacked, dim=0))
+        return torch.cat(means, dim=0)
+
+    def _lookup_group(self, group_map: Dict[int, str],
+                      client_id: int) -> Optional[str]:
+        if not group_map:
+            return None
+        if client_id in group_map:
+            return group_map[client_id]
+        if (client_id + 1) in group_map:
+            return group_map[client_id + 1]
+        if (client_id - 1) in group_map:
+            return group_map[client_id - 1]
+        return None
+
+    def _normalize_client_names(self, client_cfg) -> Optional[List[str]]:
+        if not client_cfg:
+            return None
+        normalized = []
+        for entry in client_cfg:
+            if isinstance(entry, str):
+                normalized.append(entry)
+            elif isinstance(entry, dict):
+                name = entry.get("name")
+                if not name:
+                    raise ValueError(
+                        f"Client config entries must include 'name': {entry}")
+                normalized.append(name)
+            else:
+                raise TypeError(f"Unsupported client config entry: {entry}")
+        return normalized
+
+    def _parse_sharding_spec(self, spec: str) -> Dict[str, int]:
+        if not spec:
+            return {}
+        result: Dict[str, int] = {}
+        tokens = [token.strip() for token in spec.split(",") if token.strip()]
+        for token in tokens:
+            if "=" not in token:
+                raise ValueError(
+                    f"Invalid sharding spec entry '{token}', expected NAME=NUM")
+            name, raw_value = token.split("=", 1)
+            name = name.strip()
+            raw_value = raw_value.strip()
+            if not name:
+                raise ValueError(
+                    f"Invalid sharding spec entry '{token}', empty name")
+            value = int(raw_value)
+            if value < 1:
+                raise ValueError(
+                    f"Shard count must be >= 1 for '{name}', got {value}")
+            result[name] = value
+        return result
+
+    def _get_client_group_map(self, group_by: str) -> Dict[int, str]:
+        if self._client_group_map is not None:
+            return self._client_group_map
+        self._client_group_map = {}
+        cfg = getattr(self, 'cfg', None)
+        if cfg is None:
+            return self._client_group_map
+        try:
+            data_type = str(getattr(cfg.data, 'type', '')).lower()
+            if data_type != "tulu3_federated":
+                return self._client_group_map
+            data_cfg = cfg.data.tulu3_federated
+            root = Path(cfg.data.root)
+            dataset_root = root / data_cfg.root
+            manifest_path = dataset_root / data_cfg.manifest
+            if not manifest_path.exists():
+                logger.warning(
+                    "[UNLEARN][bank] manifest not found at %s",
+                    manifest_path)
+                return self._client_group_map
+            with manifest_path.open("r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            available_clients = {
+                client["name"]: client for client in manifest.get("clients", [])
+            }
+            requested = self._normalize_client_names(
+                getattr(data_cfg, "clients", None))
+            if requested is None:
+                requested = list(available_clients.keys())
+            sharding_cfg = getattr(data_cfg, "sharding", None)
+            sharding_enabled = bool(getattr(sharding_cfg, "enable", False)) \
+                if sharding_cfg else False
+            sharding_spec = str(getattr(sharding_cfg, "spec", "")) \
+                if sharding_cfg else ""
+            default_shards = int(getattr(sharding_cfg, "default_shards", 1)) \
+                if sharding_cfg else 1
+            if not sharding_enabled and (sharding_spec.strip()
+                                         or default_shards > 1):
+                sharding_enabled = True
+            shard_map = self._parse_sharding_spec(
+                sharding_spec.strip()) if sharding_enabled else {}
+            group_by = (group_by or "group_values").lower()
+
+            client_idx = 1
+            for name in requested:
+                entry = available_clients.get(name, {"name": name})
+                if group_by == "name":
+                    group_label = entry.get("name", name)
+                elif group_by == "source":
+                    group_label = entry.get("source", entry.get("name", name))
+                else:
+                    group_values = entry.get("group_values") or []
+                    group_label = group_values[0] if group_values else \
+                        entry.get("name", name)
+
+                shard_count = shard_map.get(
+                    name, default_shards if sharding_enabled else 1)
+                if shard_count < 1:
+                    shard_count = 1
+                for _ in range(shard_count):
+                    self._client_group_map[client_idx] = group_label
+                    client_idx += 1
+        except Exception as exc:
+            logger.warning(
+                "[UNLEARN][bank] failed to build client group map: %s", exc)
+        return self._client_group_map
+
     def _orthonormalize_basis(self,
                               tensor: torch.Tensor,
                               rank_max: int,
@@ -831,9 +1074,17 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
     def _build_global_basis_for_bank(self, stacked: torch.Tensor,
                                      r_global_cfg: int,
                                      energy_target: float,
-                                     key: str) -> Optional[torch.Tensor]:
+                                     key: str,
+                                     flop_counter: Optional[Dict[str,
+                                                                 float]] =
+                                     None) -> Optional[torch.Tensor]:
         if stacked.numel() == 0:
             return None
+        if flop_counter is not None:
+            m, n = stacked.shape[0], stacked.shape[1]
+            flops = self._svd_flops(m, n)
+            flop_counter['svd'] += flops
+            flop_counter['total'] += flops
         try:
             _, singular_vals, v_h = torch.linalg.svd(stacked,
                                                      full_matrices=False)
@@ -866,10 +1117,19 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                              delta: torch.Tensor,
                              global_basis: Optional[torch.Tensor],
                              r_client_cfg: int,
-                             key: str) -> Tuple[torch.Tensor, torch.Tensor,
-                                                torch.Tensor,
-                                                Optional[torch.Tensor]]:
+                             key: str,
+                             flop_counter: Optional[Dict[str, float]] = None
+                             ) -> Tuple[torch.Tensor, torch.Tensor,
+                                        torch.Tensor,
+                                        Optional[torch.Tensor]]:
         if global_basis is not None:
+            if flop_counter is not None and global_basis.numel() > 0:
+                dout, din = delta.shape
+                rg = global_basis.shape[1]
+                flops = self._mm_flops(dout, din, rg) + \
+                    self._mm_flops(dout, rg, din)
+                flop_counter['mm'] += flops
+                flop_counter['total'] += flops
             d_glob = (delta @ global_basis) @ global_basis.transpose(-1, -2)
         else:
             d_glob = torch.zeros_like(delta)
@@ -883,6 +1143,11 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
         if residual_norm <= threshold:
             d_priv = torch.zeros_like(delta)
             return d_glob, d_priv, residual, None
+        if flop_counter is not None:
+            dout, din = residual.shape
+            flops = self._svd_flops(dout, din)
+            flop_counter['svd'] += flops
+            flop_counter['total'] += flops
         try:
             _, _, v_h = torch.linalg.svd(residual, full_matrices=False)
         except RuntimeError as exc:
@@ -917,9 +1182,21 @@ class UnlearnFedAvgAggregator(ClientsAvgAggregator):
                 else:
                     cols = min(r_client, q.shape[1])
                     priv_basis = q[:, :cols]
+                if flop_counter is not None and priv_basis is not None:
+                    m, n = priv_basis.shape
+                    flops = self._qr_flops(m, n)
+                    flop_counter['qr'] += flops
+                    flop_counter['total'] += flops
         if priv_basis is None or priv_basis.shape[1] == 0:
             d_priv = torch.zeros_like(delta)
             return d_glob, d_priv, residual, None
+        if flop_counter is not None and priv_basis is not None:
+            dout, din = residual.shape
+            rc = priv_basis.shape[1]
+            flops = self._mm_flops(dout, din, rc) + \
+                self._mm_flops(dout, rc, din)
+            flop_counter['mm'] += flops
+            flop_counter['total'] += flops
         d_priv = (residual @ priv_basis) @ priv_basis.transpose(-1, -2)
         d_res = delta - d_glob - d_priv
         return d_glob, d_priv, d_res, priv_basis

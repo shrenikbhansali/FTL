@@ -4,6 +4,10 @@ import os
 import transformers
 from datasets import load_dataset
 from tqdm import tqdm
+try:
+    from rouge_score import rouge_scorer
+except ImportError:  # pragma: no cover - optional dependency
+    rouge_scorer = None
 
 from federatedscope.core.configs.config import global_cfg
 from federatedscope.core.cmd_args import parse_args, parse_client_cfg
@@ -14,38 +18,27 @@ from federatedscope.llm.misc.fschat import FSChatBot
 transformers.logging.set_verbosity(40)
 
 
-def _tokenize(text: str):
-    return [tok for tok in text.lower().split() if tok]
+def _get_eval_split(cfg) -> str:
+    split = "test"
+    if hasattr(cfg, "eval") and hasattr(cfg.eval, "split"):
+        split_val = cfg.eval.split
+        if isinstance(split_val, str):
+            split = split_val
+        elif isinstance(split_val, (list, tuple)) and split_val:
+            split = split_val[0]
+    return split
 
 
-def _lcs_length(a, b):
-    if not a or not b:
-        return 0
-    dp = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]
-    for i, tok_a in enumerate(a, 1):
-        row = dp[i]
-        prev = dp[i - 1]
-        for j, tok_b in enumerate(b, 1):
-            if tok_a == tok_b:
-                row[j] = prev[j - 1] + 1
-            else:
-                row[j] = max(prev[j], row[j - 1])
-    return dp[-1][-1]
-
-
-def _rouge_l_f1(pred: str, ref: str):
-    pred_toks = _tokenize(pred)
-    ref_toks = _tokenize(ref)
-    if not pred_toks or not ref_toks:
-        return 0.0, 0.0, 0.0
-    lcs = _lcs_length(pred_toks, ref_toks)
-    precision = lcs / float(len(pred_toks))
-    recall = lcs / float(len(ref_toks))
-    if precision + recall == 0:
-        f1 = 0.0
-    else:
-        f1 = 2 * precision * recall / (precision + recall)
-    return f1, precision, recall
+def _get_rouge_scorer() -> "rouge_scorer.RougeScorer":
+    if rouge_scorer is None:
+        raise RuntimeError(
+            "rouge-score is required for XSum evaluation. "
+            "Install with `pip install rouge-score`."
+        )
+    return rouge_scorer.RougeScorer(
+        ["rouge1", "rouge2", "rougeL"],
+        use_stemmer=True,
+    )
 
 
 def _get_max_samples(cfg):
@@ -91,12 +84,16 @@ def main():
                            temperature=1.0,
                            top_p=1.0)
 
-    dataset = load_dataset("xsum", split="validation", cache_dir=data_root)
+    split = _get_eval_split(init_cfg)
+    dataset = load_dataset("xsum", split=split, cache_dir=data_root)
+    scorer = _get_rouge_scorer()
 
     total = 0
-    sum_f1 = 0.0
-    sum_prec = 0.0
-    sum_rec = 0.0
+    sums = {
+        "rouge1": {"f": 0.0, "p": 0.0, "r": 0.0},
+        "rouge2": {"f": 0.0, "p": 0.0, "r": 0.0},
+        "rougeL": {"f": 0.0, "p": 0.0, "r": 0.0},
+    }
 
     for sample in tqdm(dataset, desc="xsum"):
         if max_samples is not None and total >= max_samples:
@@ -107,27 +104,28 @@ def main():
             continue
         prompt = f"Document:\n{document}\nSummary:"
         pred = bot.generate(prompt, generate_kwargs)
-        f1, prec, rec = _rouge_l_f1(pred or "", summary)
-        sum_f1 += f1
-        sum_prec += prec
-        sum_rec += rec
+        scores = scorer.score(summary, pred or "")
+        for name, metrics in sums.items():
+            score = scores.get(name)
+            if score is None:
+                continue
+            metrics["f"] += score.fmeasure
+            metrics["p"] += score.precision
+            metrics["r"] += score.recall
         total += 1
 
-    if total:
-        rouge_l_f1 = sum_f1 / total
-        rouge_l_prec = sum_prec / total
-        rouge_l_rec = sum_rec / total
-    else:
-        rouge_l_f1 = 0.0
-        rouge_l_prec = 0.0
-        rouge_l_rec = 0.0
+    payload = {"total_examples": total}
+    for name, metrics in sums.items():
+        if total:
+            f1 = metrics["f"] / total
+            prec = metrics["p"] / total
+            rec = metrics["r"] / total
+        else:
+            f1 = prec = rec = 0.0
+        payload[f"{name}_f1"] = f1
+        payload[f"{name}_precision"] = prec
+        payload[f"{name}_recall"] = rec
 
-    payload = {
-        "rougeL_f1": rouge_l_f1,
-        "rougeL_precision": rouge_l_prec,
-        "rougeL_recall": rouge_l_rec,
-        "total_examples": total,
-    }
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f)
     print(f"XSum results written to {out_path}")

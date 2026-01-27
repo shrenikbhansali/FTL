@@ -57,6 +57,12 @@ def extend_aggregator_cfg(cfg):
     cfg.aggregator.unlearn.bank.bank_send_per_client = False
     cfg.aggregator.unlearn.bank.bank_proj_mode = \
         'others_private'  # {'others_private', 'others_plus_shared'}
+    cfg.aggregator.unlearn.bank.bank_proj_exclude_same_group = False
+    cfg.aggregator.unlearn.bank.bank_proj_group_by = 'group_values'
+    cfg.aggregator.unlearn.bank.bank_shared_balance = False
+    cfg.aggregator.unlearn.bank.bank_shared_balance_mode = 'mean'
+    cfg.aggregator.unlearn.bank.bank_shared_balance_group_by = \
+        cfg.aggregator.unlearn.bank.bank_proj_group_by
     cfg.aggregator.unlearn.bank.bank_proj_rank_max = 0
     cfg.aggregator.unlearn.bank.log_geometry = False
 

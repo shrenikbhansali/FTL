@@ -63,6 +63,7 @@ def extend_training_cfg(cfg):
     cfg.train.unlearn.proj_rho = 1.0
     cfg.train.unlearn.bank_use_per_client = False
     cfg.train.unlearn.log_leakage = False
+    cfg.train.unlearn.log_projection = False
 
     # ---------------------------------------------------------------------- #
     # Finetune related options

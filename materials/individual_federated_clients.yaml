@@ -19,6 +19,7 @@ clients:
   - name: hellaswag_client
     dataset: "hellaswag"
     split: "train"
+    val_split: "validation"
     style: "mcq"
     formatter: "hellaswag"
     max_length: 2048
@@ -26,6 +27,7 @@ clients:
   - name: xsum_client
     dataset: "xsum"
     split: "train"
+    val_split: "validation"
     style: "summarization"
     formatter: "xsum"
     max_length: 2048
