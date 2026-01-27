@@ -1,0 +1,70 @@
+aggregator:
+  type: unlearn_fedavg
+  unlearn:
+    alpha_global: 1.0
+    bank: {bank_proj_mode: others_private, bank_proj_rank_max: 0, bank_send_per_client: true,
+      beta_global: 0.0, beta_resid: 1.0, enable: true, energy_target: 0.0, r_client: 12,
+      r_global: 1}
+    beta_shared: 0.2
+    chunk_rows: 4096
+    enable: true
+    lambda_shrink: 1.0
+    log_stats: true
+    mode: shrink
+    only_lora: true
+    proj_dtype: float32
+    send_Q_to_clients: true
+    target_modules: [q_proj, k_proj, v_proj, o_proj]
+data:
+  root: data/
+  tulu3_federated:
+    clients: []
+    manifest: manifest.json
+    root: individual_federated
+    sharding: {default_shards: 1, enable: false, seed: 42, spec: ''}
+  type: tulu3_federated
+dataloader: {batch_size: 1}
+device: 0
+eval:
+  best_res_update_round_wise_key: val_loss
+  count_flops: false
+  freq: 100000000
+  metrics: []
+  report: [raw]
+  split: []
+federate: {client_num: 0, mode: standalone, sample_client_num: -1, sample_client_rate: 1.0,
+  save_to: ckpts/full/individual_federated_bank_perclient.ckpt, share_local_model: true,
+  total_round_num: 60}
+grad: {grad_clip: 1.0}
+llm:
+  adapter:
+    args:
+    - adapter_method: lora
+      adapter_package: peft
+      lora_alpha: 32
+      lora_dropout: 0.05
+      modules_to_save: [embed_tokens, lm_head]
+      r: 8
+      target_modules: [q_proj, k_proj, v_proj, o_proj]
+    use: true
+  chat: {max_history_len: 0, max_len: 512}
+  tok_len: 2048
+model: {type: meta-llama/Llama-2-7b-hf@huggingface_llm}
+seed: 42
+train:
+  batch_or_epoch: batch
+  cleanup_cuda_cache: true
+  cleanup_optimizer_state: true
+  is_enable_half: false
+  local_update_steps: 250
+  optimizer:
+    betas: [0.9, 0.95]
+    eps: 1.0e-05
+    lr: 0.0002
+    type: Adam
+  precision: bf16
+  unlearn: {bank_use_per_client: true, proj_rho: 1.0, project_grads: true}
+trainer: {type: llmtrainer}
+use_gpu: true
+wandb: {client_train_info: false, name_project: FTL-Dev, name_user: sbhansali8-georgia-institute-of-technology,
+  online_track: true, use: true}
